@@ -33,6 +33,7 @@ add_executable(TracccClusterStandalone src/TracccClusterStandalone.cpp)
 
 target_include_directories(TracccClusterStandalone 
 PUBLIC 
+src/
 ${traccc_INCLUDE_DIR}
 )
 add_definitions(-DALGEBRA_PLUGINS_INCLUDE_ARRAY)
