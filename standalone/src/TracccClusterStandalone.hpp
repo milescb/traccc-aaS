@@ -93,7 +93,7 @@ traccc::cell_module get_module(const std::uint64_t geometry_id,
 }
 
 std::vector<traccc::io::csv::cell> read_csv(const std::string &filename);
-std::vector<traccc::io::csv::cell> read_from_array(const std::vector<std::vector<double>> &data);
+// std::vector<traccc::io::csv::cell> read_from_array(const std::vector<std::vector<double>> &data);
 std::map<std::uint64_t, std::vector<traccc::cell>> read_deduplicated_cells(const std::vector<traccc::io::csv::cell> &cells);
 std::map<std::uint64_t, std::vector<traccc::cell>> read_all_cells(const std::vector<traccc::io::csv::cell> &cells);
 void read_cells(traccc::io::cell_reader_output &out, const std::vector<traccc::io::csv::cell> &cells, const traccc::geometry *geom, const traccc::digitization_config *dconfig, const std::map<std::uint64_t, detray::geometry::barcode> *barcode_map, bool deduplicate);
@@ -182,6 +182,7 @@ std::vector<traccc::io::csv::cell> TracccClusterStandalone::read_from_array(cons
         if (row.size() != 6)
             continue; // ensure each row contains exactly 6 elements
         traccc::io::csv::cell iocell;
+        // FIXME needs to decode to the correct type
         iocell.geometry_id = static_cast<std::uint64_t>(row[0]);
         iocell.hit_id = static_cast<int>(row[1]);
         iocell.channel0 = static_cast<int>(row[2]);
