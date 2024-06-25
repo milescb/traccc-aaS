@@ -663,10 +663,10 @@ namespace triton
                     int64_t output_buffer_memory_type_id = input_buffer_memory_type_id;
 
                     // Determine the number of floats in the input buffer
-                    size_t num_floats = input_buffer_byte_size / sizeof(float);
+                    size_t num_floats = input_buffer_byte_size / sizeof(double);
 
                     // Convert the input buffer to a float pointer
-                    const float *float_ptr = reinterpret_cast<const float *>(input_buffer);
+                    const double *double_ptr = reinterpret_cast<const double *>(input_buffer);
 
                     // Assuming each row in the input 2D array has 6 elements as per the config
                     size_t num_features = 6;
@@ -681,7 +681,7 @@ namespace triton
                         std::vector<double> row;
                         row.reserve(num_features);
                         for (size_t j = 0; j < num_features; ++j) {
-                            row.push_back(static_cast<double>(float_ptr[i * num_features + j]));
+                            row.push_back(static_cast<double>(double_ptr[i * num_features + j]));
                         }
                         input_data.push_back(row);
                     }
@@ -702,7 +702,7 @@ namespace triton
                     //   }
                     std::vector<traccc::io::csv::cell> cells = instance_state->clusterStandalone->read_from_array(input_data);
                     // Uncomment this after implementing the correct types
-                    // instance_state->clusterStandalone->runPipeline(cells);
+                    instance_state->clusterStandalone->runPipeline(cells);
 
                     std::vector<int64_t> output_data(
                         1, -1); // Initialized all to -1

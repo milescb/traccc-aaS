@@ -35,7 +35,7 @@ if __name__ == "__main__":
     input0_data = pd.read_csv(
         "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/tml_pixels/event000000000-cells.csv", 
     ).to_numpy(dtype=np.float64)
-    breakpoint()
+    
     inputs = [httpclient.InferInput("FEATURES", input0_data.shape, "FP64")]
     inputs[0].set_data_from_numpy(input0_data)
     async_requests.append(triton_client.async_infer("Traccc", inputs))

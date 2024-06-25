@@ -2,7 +2,7 @@ backend: "Traccc"
 max_batch_size: 0
 input [
   {
-    name: "FEATURES_INT"
+    name: "FEATURES"
     data_type: TYPE_FP64
     dims: [ -1, 6 ]
   }
