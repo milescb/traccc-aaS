@@ -38,7 +38,8 @@ ${traccc_INCLUDE_DIR}
 add_definitions(-DALGEBRA_PLUGINS_INCLUDE_ARRAY)
 
 target_link_libraries(TracccClusterStandalone PUBLIC 
-vecmem::core traccc::core traccc::io detray::core)
+vecmem::core traccc::core traccc::io detray::core
+traccc::performance traccc::options detray::utils detray::io)
 # vecmem::core traccc::core traccc::io traccc::performance traccc::options traccc::algebra traccc::device_common traccc::cuda
 # traccc::eigen
 # detray::core detray::utils detray::io detray::algebra_eigen)
