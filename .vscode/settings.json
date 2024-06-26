@@ -18,6 +18,7 @@
         "LD_LIBRARY_PATH": "/global/homes/m/milescb/ps/traccc-aaS/dev/install/lib:${env:LD_LIBRARY_PATH}"
     },
     "files.associations": {
+        "ostream": "cpp",
         "*.toml": "toml",
         "*.ipp": "cpp",
         "chrono": "cpp",
@@ -92,7 +93,6 @@
         "iostream": "cpp",
         "istream": "cpp",
         "mutex": "cpp",
-        "ostream": "cpp",
         "scoped_allocator": "cpp",
         "shared_mutex": "cpp",
         "sstream": "cpp",
@@ -102,6 +102,9 @@
         "valarray": "cpp",
         "simd": "cpp",
         "mem": "cpp",
-        "io": "cpp"
+        "io": "cpp",
+        "__bit_reference": "cpp",
+        "__string": "cpp",
+        "filesystem": "cpp"
     }
 }
