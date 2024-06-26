@@ -50,7 +50,7 @@ private:
     vecmem::cuda::host_memory_resource cuda_host_mr;
     vecmem::cuda::device_memory_resource device_mr;
     traccc::memory_resource mr{device_mr, &cuda_host_mr};
-    // // CUDA types used.
+    // CUDA types used.
     traccc::cuda::stream stream;
     vecmem::cuda::async_copy copy{stream.cudaStream()};
     // inputs
@@ -58,6 +58,10 @@ private:
     traccc::opts::input_data input_opts;
     traccc::opts::clusterization clusterization_opts;
     traccc::opts::accelerator accelerator_opts;
+    // detector options
+    traccc::geometry surface_transforms;
+    std::unique_ptr<traccc::digitization_config> digi_cfg;
+    std::unique_ptr<std::map<std::uint64_t, detray::geometry::barcode>> barcode_map;
 
 public:
     TracccGpuStandalone(int deviceID = 0) :
