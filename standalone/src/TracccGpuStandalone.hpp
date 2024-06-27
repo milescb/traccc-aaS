@@ -53,14 +53,14 @@ private:
     // CUDA types used.
     traccc::cuda::stream stream;
     vecmem::cuda::async_copy copy{stream.cudaStream()};
-    // inputs
+    // opt inputs
     traccc::opts::detector detector_opts;
     traccc::opts::input_data input_opts;
     traccc::opts::clusterization clusterization_opts;
     traccc::opts::accelerator accelerator_opts;
     // detector options
     traccc::geometry surface_transforms;
-    std::unique_ptr<traccc::digitization_config> digi_cfg;
+    traccc::digitization_config digi_cfg;
     std::unique_ptr<std::map<std::uint64_t, detray::geometry::barcode>> barcode_map;
 
 public:
@@ -79,7 +79,7 @@ public:
 
 void TracccGpuStandalone::initialize()
 {
-    // HACK: hard code location of detector file
+    // HACK: hard code location of detector and digitization file
     detector_opts.detector_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/tml_detector/trackml-detector.csv";
     detector_opts.digitization_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/tml_detector/default-geometric-config-generic.json";
 
@@ -87,46 +87,34 @@ void TracccGpuStandalone::initialize()
     auto [surface_transforms, barcode_map] = traccc::io::read_geometry(
         detector_opts.detector_file, traccc::data_format::csv);
 
+    using host_detector_type = detray::detector<detray::default_metadata,
+                                            detray::host_container_types>;
+
+    host_detector_type host_detector{host_mr};
+    host_detector_type::buffer_type device_detector;
+    host_detector_type::view_type device_detector_view;
+    detray::io::detector_reader_config cfg;
+    cfg.add_file(traccc::io::data_directory() +
+                    detector_opts.detector_file);
+
+    // Read the detector.
+    auto det = detray::io::read_detector<host_detector_type>(host_mr, cfg);
+    host_detector = std::move(det.first);
+
+    // Copy it to the device.
+    device_detector = detray::get_buffer(detray::get_data(host_detector),
+                                            device_mr, copy);
+    stream.synchronize();
+    device_detector_view = detray::get_data(device_detector);
+
+    // Read the digitization configuration file
+    auto digi_cfg = traccc::io::read_digitization_config(detector_opts.digitization_file);
+
     return;
 }
 
 void TracccGpuStandalone::run()
 {
-
-    using host_detector_type = detray::detector<detray::default_metadata,
-                                                detray::host_container_types>;
-
-    host_detector_type host_detector{host_mr};
-    host_detector_type::buffer_type device_detector;
-    host_detector_type::view_type device_detector_view;
-    if (detector_opts.use_detray_detector) {
-        // Set up the detector reader configuration.
-        detray::io::detector_reader_config cfg;
-        cfg.add_file(traccc::io::data_directory() +
-                     detector_opts.detector_file);
-        if (detector_opts.material_file.empty() == false) {
-            cfg.add_file(traccc::io::data_directory() +
-                         detector_opts.material_file);
-        }
-        if (detector_opts.grid_file.empty() == false) {
-            cfg.add_file(traccc::io::data_directory() +
-                         detector_opts.grid_file);
-        }
-
-        // Read the detector.
-        auto det = detray::io::read_detector<host_detector_type>(host_mr, cfg);
-        host_detector = std::move(det.first);
-
-        // Copy it to the device.
-        device_detector = detray::get_buffer(detray::get_data(host_detector),
-                                             device_mr, copy);
-        stream.synchronize();
-        device_detector_view = detray::get_data(device_detector);
-    }
-
-    // Read the digitization configuration file
-    auto digi_cfg =
-        traccc::io::read_digitization_config(detector_opts.digitization_file);
 
     // Output stats
     uint64_t n_cells = 0;
