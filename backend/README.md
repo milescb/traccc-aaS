@@ -3,6 +3,8 @@ Taken in large part from [triton-inference-server/backend](https://github.com/tr
 
 ## Build model
 
+Both a cpu and gpu model are available. Both must be built separately as shown below:
+
 ```
 cmake -B <build_dir> -S <source_dir> \
     -DCMAKE_INSTALL_PREFIX=<install_dir> \
@@ -29,3 +31,5 @@ export LD_LIBRARY_PATH=$INSTALLDIR/lib:$LD_LIBRARY_PATH
 
 tritonserver --model-repository=$INSTALLDIR/models
 ```
+
+This will launch both the cpu and gpu model for deployment. 
