@@ -8,6 +8,10 @@ Main objective of this repo: run [traccc](https://github.com/acts-project/traccc
 
 A minimal description of how to build a working version is detailed below. In each subdirectory of this project, a README containing more information can be found. 
 
+## Previous work
+
+A large portion of this work is based on the CPU version included here developed by Haoran Zhao. The original repo can be found [here](https://github.com/hrzhao76/traccc-aaS). 
+
 ## Running out of the box
 
 ### Docker

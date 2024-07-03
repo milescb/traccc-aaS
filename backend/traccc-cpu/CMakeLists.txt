@@ -24,6 +24,8 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+# Modifications made by Haoran Zhao, haoran.zhao [at] cern.ch, June 2024.
+
 cmake_minimum_required(VERSION 3.17)
 
 project(TracccBackend LANGUAGES C CXX)
@@ -31,25 +33,24 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(/usr/local/cuda/include/)
-#include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../standalone/src)
-include_directories(/global/homes/m/milescb/tracking/traccc-aaS-gpu/standalone/src)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../standalone/src)
 
-#
 # Options
 #
 # Must include options required for this project as well as any
 # projects included in this one by FetchContent.
 #
-# GPU support is disabled by default because recommended backend
+# GPU support is disabled by default because Traccc backend
 # doesn't use GPUs.
 #
 option(TRITON_ENABLE_GPU "Enable GPU support in backend" ON)
 option(TRITON_ENABLE_STATS "Include statistics collections in backend" ON)
 
-set(TRITON_REPO_ORGANIZATION "https://github.com/triton-inference-server" CACHE STRING "Git repository to pull from")
-set(TRITON_COMMON_REPO_TAG "main" CACHE STRING "Tag for triton-inference-server/common repo")
-set(TRITON_CORE_REPO_TAG "main" CACHE STRING "Tag for triton-inference-server/core repo")
-set(TRITON_BACKEND_REPO_TAG "main" CACHE STRING "Tag for triton-inference-server/backend repo")
+# change "main" to "r22.02"
+set(TRITON_TAG "r22.02" CACHE STRING "Tag for triton-inference-server repositories")
+set(TRITON_COMMON_REPO_TAG ${TRITON_TAG} CACHE STRING "Tag for triton-inference-server/common repo")
+set(TRITON_CORE_REPO_TAG ${TRITON_TAG} CACHE STRING "Tag for triton-inference-server/core repo")
+set(TRITON_BACKEND_REPO_TAG ${TRITON_TAG} CACHE STRING "Tag for triton-inference-server/backend repo")
 
 #
 # Setting C++ min standard
@@ -70,97 +71,93 @@ include(FetchContent)
 
 FetchContent_Declare(
   repo-common
-  GIT_REPOSITORY ${TRITON_REPO_ORGANIZATION}/common.git
+  GIT_REPOSITORY https://github.com/triton-inference-server/common.git
   GIT_TAG ${TRITON_COMMON_REPO_TAG}
   GIT_SHALLOW ON
 )
 FetchContent_Declare(
   repo-core
-  GIT_REPOSITORY ${TRITON_REPO_ORGANIZATION}/core.git
+  GIT_REPOSITORY https://github.com/triton-inference-server/core.git
   GIT_TAG ${TRITON_CORE_REPO_TAG}
   GIT_SHALLOW ON
 )
 FetchContent_Declare(
   repo-backend
-  GIT_REPOSITORY ${TRITON_REPO_ORGANIZATION}/backend.git
+  GIT_REPOSITORY https://github.com/triton-inference-server/backend.git
   GIT_TAG ${TRITON_BACKEND_REPO_TAG}
   GIT_SHALLOW ON
 )
 FetchContent_MakeAvailable(repo-common repo-core repo-backend)
 
-# 
-# Traccc dependencies
 #
+# Setup up Traccc
+
 find_package(actsvg REQUIRED)
 find_package(covfie REQUIRED)
 find_package(traccc REQUIRED)
 
-#
 # The backend must be built into a shared library. Use an ldscript to
 # hide all symbols except for the TRITONBACKEND API.
 #
-configure_file(src/libtriton_traccc.ldscript libtriton_traccc.ldscript COPYONLY)
+configure_file(src/libtriton_Traccc.ldscript libtriton_Traccc.ldscript COPYONLY)
 
 add_library(
-  triton-traccc-backend SHARED
-  src/traccc.cc
+  triton-Traccc-backend SHARED
+  src/Traccc.cc
 )
 
 add_library(
-  TraccBackend::triton-traccc-backend ALIAS triton-traccc-backend
+  TracccBackend::triton-Traccc-backend ALIAS triton-Traccc-backend
 )
 
 target_include_directories(
-  triton-traccc-backend
+  triton-Traccc-backend
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${traccc_INCLUDE_DIR}
 )
 
-target_compile_features(triton-traccc-backend PRIVATE cxx_std_${TRITON_MIN_CXX_STANDARD})
+target_compile_features(triton-Traccc-backend PRIVATE cxx_std_${TRITON_MIN_CXX_STANDARD})
 target_compile_options(
-  triton-traccc-backend PRIVATE
+  triton-Traccc-backend PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
     -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Werror>
   $<$<CXX_COMPILER_ID:MSVC>:/Wall /D_WIN32_WINNT=0x0A00 /EHsc /Zc:preprocessor>
 )
 
 target_link_libraries(
-  triton-traccc-backend
+  triton-Traccc-backend
   PRIVATE
     triton-core-serverapi   # from repo-core
     triton-core-backendapi  # from repo-core
     triton-core-serverstub  # from repo-core
     triton-backend-utils    # from repo-backend
-    # traccc deps
     vecmem::core 
-    vecmem::cuda 
-    traccc::io 
-    traccc::performance
     traccc::core 
-    traccc::device_common 
-    traccc::cuda
+    traccc::io 
+    detray::core
+    traccc::performance 
     traccc::options 
     detray::utils 
     detray::io
 )
 
-# must set algrebra puglin include array
 add_definitions(-DALGEBRA_PLUGINS_INCLUDE_ARRAY)
+
 
 if(WIN32)
   set_target_properties(
-    triton-traccc-backend PROPERTIES
+    triton-Traccc-backend PROPERTIES
     POSITION_INDEPENDENT_CODE ON
-    OUTPUT_NAME triton_traccc
+    OUTPUT_NAME triton_Traccc
   )
 else()
   set_target_properties(
-    triton-traccc-backend PROPERTIES
+    triton-Traccc-backend PROPERTIES
     POSITION_INDEPENDENT_CODE ON
-    OUTPUT_NAME triton_traccc
-    LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libtriton_traccc.ldscript
-    LINK_FLAGS "-Wl,--version-script libtriton_traccc.ldscript"
+    OUTPUT_NAME triton_Traccc
+    LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libtriton_Traccc.ldscript
+    LINK_FLAGS "-Wl,--version-script libtriton_Traccc.ldscript"
   )
 endif()
 
@@ -168,20 +165,33 @@ endif()
 # Install
 #
 include(GNUInstallDirs)
-set(INSTALL_CONFIGDIR ${CMAKE_INSTALL_LIBDIR}/cmake/TracccBackend)
+# set(INSTALL_CONFIGDIR ${CMAKE_INSTALL_LIBDIR}/cmake/TracccBackend)
+set(INSTALL_CONFIGDIR ${CMAKE_INSTALL_PREFIX}/lib/cmake/TracccBackend)
 
 install(
   TARGETS
-    triton-traccc-backend
+    triton-Traccc-backend
   EXPORT
-    triton-traccc-backend-targets
-  LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/backends/traccc
-  RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/backends/traccc
+    triton-Traccc-backend-targets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/backends/Traccc
+  RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/backends/Traccc
+)
+
+install(DIRECTORY ${CMAKE_INSTALL_PREFIX}/../../models
+        DESTINATION ${CMAKE_INSTALL_PREFIX}
+        USE_SOURCE_PERMISSIONS
+)
+
+install(
+  TARGETS
+    triton-Traccc-backend
+  LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/../../models/traccc-cpu
+  RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/../../models/traccc-cpu
 )
 
 install(
   EXPORT
-    triton-traccc-backend-targets
+    triton-Traccc-backend-targets
   FILE
     TracccBackendTargets.cmake
   NAMESPACE
@@ -207,7 +217,7 @@ install(
 # Export from build tree
 #
 export(
-  EXPORT triton-traccc-backend-targets
+  EXPORT triton-Traccc-backend-targets
   FILE ${CMAKE_CURRENT_BINARY_DIR}/TracccBackendTargets.cmake
   NAMESPACE TracccBackend::
 )
