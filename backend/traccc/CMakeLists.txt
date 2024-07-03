@@ -114,6 +114,7 @@ target_include_directories(
   triton-traccc-backend
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${traccc_INCLUDE_DIR}
 )
 
 target_compile_features(triton-traccc-backend PRIVATE cxx_std_${TRITON_MIN_CXX_STANDARD})
@@ -144,6 +145,7 @@ target_link_libraries(
     detray::io
 )
 
+# must set algrebra puglin include array
 add_definitions(-DALGEBRA_PLUGINS_INCLUDE_ARRAY)
 
 if(WIN32)

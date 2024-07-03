@@ -23,9 +23,9 @@ cmake --build . --target install -- -j20
 ## Run model
 
 ```
-export INSTALLDIR=/global/cfs/projectdirs/m3443/data/ACTS-aaS/sw/prod/ver_02012024
+export INSTALLDIR=/pscratch/sd/m/milescb/traccc-aaS/dev/install
 export PATH=$INSTALLDIR/bin:$PATH
 export LD_LIBRARY_PATH=$INSTALLDIR/lib:$LD_LIBRARY_PATH
 
-tritonserver --model-repository=<model_repo>
+tritonserver --model-repository=$INSTALLDIR/models
 ```
