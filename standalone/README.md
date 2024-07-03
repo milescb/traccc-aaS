@@ -40,3 +40,13 @@ Local coordinates: [-3.675, -1.875]
 Measurement ID: 425
 Local coordinates: [6.375, -1.375]
 ```
+
+## Compare to official example
+
+Running the following is ~equivalent to what the standalone version does:
+
+```
+$INSTALLDIR/bin/traccc_seq_example_cuda --detector-file=$DATADIR/tml_detector/trackml-detector.csv --digitization-file=$DATADIR/tml_detector/default-geometric-config-generic.json --input-directory=$DATADIR/tml_pixels/
+```
+
+Running without the option `--use-detray-detector` does not run track fitting or track finding. 
