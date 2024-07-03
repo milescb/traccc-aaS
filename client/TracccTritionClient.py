@@ -21,7 +21,7 @@ def main():
     print("\n=========")
     async_requests = []
 
-    input0_data = pd.read_csv("event000000000-cells.csv").to_numpy(dtype=np.float64)
+    input0_data = pd.read_csv(FLAGS.filename).to_numpy(dtype=np.float64)
     print("Sending request to batching model: input = {}".format(input0_data))
     inputs = [httpclient.InferInput("FEATURES", input0_data.shape, "FP64")]
     inputs[0].set_data_from_numpy(input0_data)
@@ -43,6 +43,14 @@ if __name__ == "__main__":
         required=False,
         default="localhost:8000",
         help="Inference server URL. Default is localhost:8000.",
+    )
+    parser.add_argument(
+        "-f",
+        "--filename",
+        type=str,
+        required=False,
+        default="event000000000-cells.csv",
+        help="Input file name. Default is event000000000-cells.csv.",
     )
     FLAGS = parser.parse_args()
 
