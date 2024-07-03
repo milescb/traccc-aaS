@@ -33,15 +33,24 @@ foreach (_variableName ${_variableNames})
 endforeach()
 
 add_executable(TracccGpuStandalone src/TracccGpuStandalone.cpp)
+add_executable(TracccCpuStandalone src/TracccCpuStandalone.cpp)
 
 target_include_directories(TracccGpuStandalone 
-PUBLIC 
-src/
-${traccc_INCLUDE_DIR}
+    PUBLIC src/${traccc_INCLUDE_DIR}
 )
+
+target_include_directories(TracccCpuStandalone 
+    PUBLIC src/${traccc_INCLUDE_DIR}
+)
+
 add_definitions(-DALGEBRA_PLUGINS_INCLUDE_ARRAY)
 
 target_link_libraries(TracccGpuStandalone PUBLIC 
     vecmem::core vecmem::cuda traccc::io traccc::performance
     traccc::core traccc::device_common traccc::cuda
-    traccc::options detray::utils detray::io)
+    traccc::options detray::utils detray::io detray::core)
+
+target_link_libraries(TracccCpuStandalone PUBLIC 
+    vecmem::core traccc::io traccc::performance
+    traccc::core traccc::device_common
+    traccc::options detray::utils detray::io detray::core)

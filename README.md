@@ -8,6 +8,10 @@ Main objective of this repo: run [traccc](https://github.com/acts-project/traccc
 
 A minimal description of how to build a working version is detailed below. In each subdirectory of this project, a README containing more information can be found. 
 
+## Previous work
+
+A large portion of this work is based on the CPU version included here developed by Haoran Zhao. The original repo can be found [here](https://github.com/hrzhao76/traccc-aaS). This CPU version has been incorporated into the workflow here such that both a CPU and GPU version are available. 
+
 ## Running out of the box
 
 ### Docker
@@ -42,15 +46,14 @@ Once the server is launched, run the model via:
 ```
 cd client && python TracccTritionClient.py 
 ```
-
-More info in the client directory. 
+The `--architecture` tag can be used to toggle the cpu and gpu version via `-a cpu`, for instance. More info in the client directory. 
 
 ## Building the backend
 
 First, enter the docker and set environment variables as documented above. Then run
 
 ```
-cd backend/traccc && mkdir build install && cd build
+cd backend/traccc-gpu && mkdir build install && cd build
 cmake -B . -S ../ \
     -DCMAKE_INSTALL_PREFIX=../install/ \
     -DCMAKE_INSTALL_PREFIX=../install/
@@ -58,8 +61,8 @@ cmake -B . -S ../ \
 cmake --build . --target install -- -j20
 ```
 
-The relevant shared library for triton can then be found in `install/backends/traccc/libtriton_traccc.so`. Copy this file into the `models/traccc` directory. Then the server can be started via (assuming the user is still in the build directory above)
+Both the CPU and GPU versions must be built separately. Then, the server can be launched as above:
 
 ```
-tritonserver --model-repository=../models
+tritonserver --model-repository=../../models
 ```
