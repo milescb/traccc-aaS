@@ -26,3 +26,20 @@ Run `perf_analyzer` with the CPU and GPU configuration, then run
 ```
 python plot_concurrency_studies.py
 ```
+
+### Compare CPU / GPU performance on `traccc` examples
+
+First, make `.log` files containing the output of running the `traccc` examples via (for instance)
+
+```
+$INSTALLDIR/bin/traccc_seq_example_cuda \
+    --detector-file=$DATADIR/tml_detector/trackml-detector.csv \
+    --digitization-file=$DATADIR/tml_detector/default-geometric-config-generic.json 
+    --input-directory=$DATADIR/tml_full/ttbar_mu100 &> data/logs/gpu_mu100.log
+```
+
+then run the following to create the plot:
+
+```
+python compare_gpu_cpu_traccc.py
+```
