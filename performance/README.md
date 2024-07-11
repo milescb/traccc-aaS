@@ -24,9 +24,9 @@ Run `perf_analyzer` with the CPU and GPU configuration
 
 ```
 perf_analyzer -m traccc-gpu --input-data $DATADIR/../test_data/test_perf_data.json \
-    --concurrency-range <start>:<end>:<step> &> <log_dir>/<log_name> \
-    -f out_gpu.csv --verbose-csv --collect-metrics \
-    --measurement-interval 10000
+    --concurrency-range <start>:<end>:<step> \
+    --verbose-csv --collect-metrics \
+    --measurement-interval 10000 -f out_gpu.csv 
 ```
 
 then run

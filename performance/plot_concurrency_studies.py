@@ -25,6 +25,16 @@ def gpu_to_number(df):
     return df
 
 def main():
+    
+    cpu_data = pd.read_csv(args.input_cpu)
+    gpu_data = pd.read_csv(args.input_gpu)
+    
+    cpu_data = cpu_data.sort_values(by='Concurrency', ascending=True)
+    gpu_data = gpu_data.sort_values(by='Concurrency', ascending=True)
+    
+    cpu_data = gpu_to_number(cpu_data)
+    gpu_data = gpu_to_number(gpu_data)
+    
     plot_data(cpu_data, gpu_data)
     plot_data(cpu_data, gpu_data, 
               variable='Avg latency', 
@@ -40,19 +50,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("-gpu", "--input-gpu", 
                         default='data/out_gpu.csv',
-                        type=str, help="Input text file path")
+                        type=str, help="Input csv file path")
     parser.add_argument("-cpu", "--input-cpu",
                         default='data/out_cpu.csv',
-                        type=str, help="Input text file path")
+                        type=str, help="Input csv file path")
     args = parser.parse_args()
-    
-    cpu_data = pd.read_csv(args.input_cpu)
-    gpu_data = pd.read_csv(args.input_gpu)
-    
-    cpu_data = cpu_data.sort_values(by='Concurrency', ascending=True)
-    gpu_data = gpu_data.sort_values(by='Concurrency', ascending=True)
-    
-    cpu_data = gpu_to_number(cpu_data)
-    gpu_data = gpu_to_number(gpu_data)
     
     main()

@@ -29,14 +29,14 @@ def plot_data(data):
     gpu_mu = sorted(data['gpu'].keys())
     gpu_time = [data['gpu'][mu] for mu in gpu_mu]
     
-    plt.plot(gpu_mu, gpu_time, label='GPU', marker='o')
+    plt.plot(gpu_mu, gpu_time, label='GPU', marker='s')
     plt.xlabel('Average interactions per bunch crossing', loc='right')
     plt.ylabel('Time to Complete Clusterization (ms)', loc='top')
     plt.legend()
     plt.grid(True)
 
     # Show the plot
-    plt.savefig('plots/mu_vs_time.pdf')
+    plt.savefig('plots/mu_vs_time.pdf', bbox_inches='tight')
 
 def main():
     
