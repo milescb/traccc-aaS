@@ -5,9 +5,31 @@ import argparse
 
 def clean_pandas_df(df):
     df = df.sort_values(by='Concurrency', ascending=True)
-    for column in df.columns:
-        if 'GPU' in column:
-            df[column] = pd.to_numeric(df[column].str.split(':').str[-1].str.rstrip(';'), errors='coerce')
+    
+    new_columns = {}
+        
+    for index, row in df.iterrows():
+        # Split the cell content by ';' to get individual GPU utilizations
+        gpus = row['Avg GPU Utilization'].rstrip(';').split(';')
+        
+        for i, gpu in enumerate(gpus):
+            _, utilization = gpu.split(':')
+            new_col_name = f'gpu_util_{i}'
+            
+            # Add the utilization value to the new_columns dictionary
+            if new_col_name not in new_columns:
+                new_columns[new_col_name] = [None] * len(df) 
+            new_columns[new_col_name][index] = pd.to_numeric(utilization, errors='coerce') * 100
+    
+    # Add the new columns to the DataFrame
+    for new_col_name, values in new_columns.items():
+        df[new_col_name] = values
+        
+    gpu_util_columns = [col for col in df.columns if 'gpu_util_' in col]
+    df['total_gpu_usage'] = df[gpu_util_columns].sum(axis=1)
+        
+    df.drop('Avg GPU Utilization', axis=1, inplace=True)
+    
     return df
 
 def instance_number(filename):
@@ -100,6 +122,10 @@ def main():
                          variable='Avg latency',
                          ylabel='CPU Latency (us)',
                          save_name='instances_vs_latency_cpu.pdf')
+    plot_var_vs_instance(gpu_data_instances,
+                         variable='total_gpu_usage',
+                         ylabel='GPU Utilization (%)',
+                         save_name='instances_vs_gpu_utilization.pdf')
     
     for i in range(1, 6):
         plot_instance_cpu_gpu(cpu_data_instances, gpu_data_instances, concurrency=i,
