@@ -2,6 +2,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+// #include <cuda_runtime.h>
 
 // Project include(s).
 #include "traccc/clusterization/clusterization_algorithm.hpp"
@@ -156,10 +157,13 @@ private:
 
 public:
     TracccGpuStandalone(int deviceID = 0) :
-        m_device_id(deviceID), 
+        stream(deviceID),
+        copy(stream.cudaStream()), 
         ca_cuda(mr, copy, stream, clusterization_opts), 
         ms_cuda(copy, stream)
     {
+        std::cout << "Cuda stream " << stream.cudaStream() << std::endl;
+        stream.synchronize();
         initialize();
     }
 
@@ -174,20 +178,20 @@ public:
 void TracccGpuStandalone::initialize()
 {
     // HACK: hard code location of detector and digitization file
-    detector_opts.detector_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/tml_detector/trackml-detector.csv";
-    detector_opts.digitization_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/tml_detector/default-geometric-config-generic.json";
+    detector_opts.detector_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_geometry_detray.json";
+    detector_opts.digitization_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-digi-geometric-config.json";
+    detector_opts.grid_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_surface_grids_detray.json";
+    detector_opts.use_detray_detector = true;
 
     // read in geometry
-    auto geom_data = traccc::io::read_geometry(detector_opts.detector_file,
-                                            (detector_opts.use_detray_detector ? traccc::data_format::json : traccc::data_format::csv));
+    auto geom_data = traccc::io::read_geometry(detector_opts.detector_file, traccc::data_format::json);
     surface_transforms = std::move(geom_data.first);
     barcode_map = std::move(geom_data.second);
 
-
-    // cfg.add_file(detector_opts.detector_file);
-
     // Read the digitization configuration file
     digi_cfg = std::make_unique<traccc::digitization_config>(traccc::io::read_digitization_config(detector_opts.digitization_file));
+
+    stream.synchronize();
 
     return;
 }
@@ -222,9 +226,6 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     copy(measurements_cuda_buffer, measurements_per_event_cuda)->wait();
 
     stream.synchronize();
-
-    // Print out measurements!
-    std::cout << measurements_per_event_cuda.size() << std::endl;
 
     for (std::size_t i = 0; i < 10; ++i) {
         auto measurement = measurements_per_event_cuda.at(i);

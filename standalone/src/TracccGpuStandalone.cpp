@@ -12,7 +12,7 @@ int main(int argc, char *argv[])
     std::string event_file = std::string(argv[1]);
     std::cout << "Running " << argv[0] << " on " << event_file << std::endl;
 
-    TracccGpuStandalone standalone;
+    TracccGpuStandalone standalone(0);
     auto cells = read_csv(event_file);
     standalone.run(cells);
 
