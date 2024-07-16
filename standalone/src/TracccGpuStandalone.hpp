@@ -3,6 +3,8 @@
 #include <iostream>
 #include <memory>
 
+#include <cuda_runtime.h>
+
 // Project include(s).
 #include "traccc/clusterization/clusterization_algorithm.hpp"
 #include "traccc/cuda/clusterization/clusterization_algorithm.hpp"
@@ -132,7 +134,7 @@ private:
     vecmem::cuda::host_memory_resource cuda_host_mr;
     vecmem::cuda::device_memory_resource device_mr;
     traccc::memory_resource mr{device_mr, &cuda_host_mr};
-    // CUDA types used.
+    // CUDA types used
     traccc::cuda::stream stream;
     vecmem::cuda::async_copy copy{stream.cudaStream()};
     // opt inputs
@@ -156,11 +158,18 @@ private:
 
 public:
     TracccGpuStandalone(int deviceID = 0) :
-        m_device_id(deviceID), 
+        device_mr{deviceID},
+        mr{device_mr, &cuda_host_mr},
+        stream{deviceID},
+        copy{stream.cudaStream()},
         ca_cuda(mr, copy, stream, clusterization_opts), 
         ms_cuda(copy, stream)
     {
+        cudaSetDevice(deviceID);
+        std::cout << "Device ID " << deviceID << std::endl;
+        std::cout << "Current device: " << stream.device() << std::endl;
         initialize();
+        std::cout << "Current device: " << stream.device() << std::endl;
     }
 
     // default destructor
@@ -204,6 +213,8 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     const traccc::cell_module_collection_types::host&
         modules_per_event = read_out.modules;
 
+    std::cout << "Current device: " << stream.device() << std::endl;
+
     // Create device copy of input collections
     traccc::cell_collection_types::buffer cells_buffer(
         cells_per_event.size(), mr.main);
@@ -212,14 +223,20 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
         modules_per_event.size(), mr.main);
     copy(vecmem::get_data(modules_per_event), modules_buffer);
 
+    std::cout << "Current device: " << stream.device() << std::endl;
+
     // Reconstruct it into spacepoints on the device.
     traccc::measurement_collection_types::buffer measurements_cuda_buffer(
             0, *mr.host);
     measurements_cuda_buffer = ca_cuda(cells_buffer, modules_buffer);
     ms_cuda(measurements_cuda_buffer);
+    std::cout << "Current device: " << stream.device() << std::endl;
     stream.synchronize();
+    std::cout << "Current device: " << stream.device() << std::endl;
 
     copy(measurements_cuda_buffer, measurements_per_event_cuda)->wait();
+
+    std::cout << "Current device: " << stream.device() << std::endl;
 
     stream.synchronize();
 
