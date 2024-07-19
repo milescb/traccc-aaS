@@ -3,7 +3,7 @@ max_batch_size: 0
 input [
   {
     name: "FEATURES"
-    data_type: TYPE_FP64
+    data_type: TYPE_STRING
     dims: [ -1, 6 ]
   }
 ]

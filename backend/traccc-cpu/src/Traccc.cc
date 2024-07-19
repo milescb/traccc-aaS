@@ -662,28 +662,70 @@ namespace triton
                     TRITONSERVER_MemoryType output_buffer_memory_type = input_buffer_memory_type;
                     int64_t output_buffer_memory_type_id = input_buffer_memory_type_id;
 
-                    // Determine the number of floats in the input buffer
-                    size_t num_floats = input_buffer_byte_size / sizeof(double);
+                    // Determine the number of strings in the input buffer
+                    size_t num_strings = 0;
+                    for (size_t i = 0; i < input_buffer_byte_size; ++i) {
+                        if (input_buffer[i] == '\0') {
+                            ++num_strings;
+                        }
+                    }
 
                     // Convert the input buffer to a float pointer
-                    const double *double_ptr = reinterpret_cast<const double *>(input_buffer);
+                    const char* char_ptr = reinterpret_cast<const char*>(input_buffer);
+                    ++char_ptr; // Skip the first null terminator
+
+                    // initialize input
+                    std::vector<std::vector<std::string>> input_data;
 
                     // Assuming each row in the input 2D array has 6 elements as per the config
                     size_t num_features = 6;
-                    size_t num_rows = num_floats / num_features;
+                    size_t num_rows = num_strings / num_features;
 
                     // Convert the input buffer to a 2D vector
-                    std::vector<std::vector<double>> input_data;
-                    input_data.reserve(num_rows);
+                    std::vector<std::string> current_row;
+                    std::string current_string;
 
-                    // FIXME type 
-                    for (size_t i = 0; i < num_rows; ++i) {
-                        std::vector<double> row;
-                        row.reserve(num_features);
-                        for (size_t j = 0; j < num_features; ++j) {
-                            row.push_back(static_cast<double>(double_ptr[i * num_features + j]));
+                    // Process the buffer
+                    for (size_t i = 0; i < num_rows; ++i) 
+                    {
+                        current_row.clear();
+                        for (size_t j = 0; j < num_features; ++j) 
+                        {
+                            // Reset the current string
+                            current_string.clear();
+
+                            // Skip any leading null terminators (empty strings)
+                            while (*char_ptr == '\0' && static_cast<size_t>(char_ptr - input_buffer) < input_buffer_byte_size) 
+                            {
+                                ++char_ptr; // Move to the next character
+                            }
+
+                            // Check if we've reached the end of the buffer
+                            if (static_cast<size_t>(char_ptr - input_buffer) >= input_buffer_byte_size) 
+                            {
+                                break; // Exit the loop if the end of the buffer is reached
+                            }
+
+                            // Read characters until a null terminator is found
+                            while (*char_ptr != '\0') 
+                            {
+                                current_string += *char_ptr;
+                                ++char_ptr; // Move to the next character
+                            }
+
+                            // Skip the null terminator for the next string
+                            ++char_ptr;
+
+                            // Add the current string to the current row if it's not empty
+                            if (!current_string.empty()) 
+                            {
+                                current_row.push_back(current_string);
+                            }
                         }
-                        input_data.push_back(row);
+                        // Add the current row to the input data
+                        if (!current_row.empty()) {
+                            input_data.push_back(current_row);
+                        }
                     }
 
                     int numCells = input_data.size();

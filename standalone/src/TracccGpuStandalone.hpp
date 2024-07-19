@@ -1,7 +1,7 @@
-#include <exception>
-#include <iomanip>
 #include <iostream>
-#include <memory>
+#include <algorithm>
+#include <chrono>
+#include <iomanip>
 // #include <cuda_runtime.h>
 
 // Project include(s).
@@ -172,7 +172,7 @@ public:
 
     void initialize();
     void run(std::vector<traccc::io::csv::cell> cells);
-    std::vector<traccc::io::csv::cell> read_from_array(const std::vector<std::vector<double>> &data);
+    std::vector<traccc::io::csv::cell> read_from_array(const std::vector<std::vector<std::string>> &data);
 };
 
 void TracccGpuStandalone::initialize()
@@ -352,7 +352,7 @@ void read_cells(traccc::io::cell_reader_output &out,
     }
 }
 
-std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const std::vector<std::vector<double>> &data)
+std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const std::vector<std::vector<std::string>> &data)
 {
     std::vector<traccc::io::csv::cell> cells;
 
@@ -361,13 +361,13 @@ std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const st
         if (row.size() != 6)
             continue; // ensure each row contains exactly 6 elements
         traccc::io::csv::cell iocell;
-        // FIXME needs to decode to the correct type
-        iocell.geometry_id = static_cast<std::uint64_t>(row[0]);
-        iocell.hit_id = static_cast<int>(row[1]);
-        iocell.channel0 = static_cast<int>(row[2]);
-        iocell.channel1 = static_cast<int>(row[3]);
-        iocell.timestamp = static_cast<int>(row[4]);
-        iocell.value = row[5];
+        iocell.geometry_id = static_cast<std::uint64_t>(std::stoull(row[0]));
+        iocell.hit_id = std::stoi(row[1]);
+        iocell.channel0 = std::stoi(row[2]);
+        iocell.channel1 = std::stoi(row[3]);
+        iocell.timestamp = std::stoi(row[4]);
+        iocell.value = std::stod(row[5]); // Assuming value is a double
+
         cells.push_back(iocell);
     }
 

@@ -4,6 +4,7 @@ import sys
 import numpy as np
 import pandas as pd
 import tritonclient.http as httpclient
+import decimal
 
 def main():
     # For the HTTP client, need to specify large enough concurrency to
@@ -21,10 +22,12 @@ def main():
     print("\n=========")
     async_requests = []
 
-    input0_data = pd.read_csv(FLAGS.filename).to_numpy(dtype=np.float64)
+    # must convert to object to avoid float64 overflow
+    input0_data = pd.read_csv(FLAGS.filename).to_numpy(dtype=object)
     print("Sending request to batching model: input = {}".format(input0_data))
-    inputs = [httpclient.InferInput("FEATURES", input0_data.shape, "FP64")]
-    inputs[0].set_data_from_numpy(input0_data)
+    
+    inputs = [httpclient.InferInput("FEATURES", input0_data.shape, "BYTES")]
+    inputs[0].set_data_from_numpy(input0_data, binary_data=True)
     async_requests.append(triton_client.async_infer(f"traccc-{FLAGS.architecture}", inputs))
 
     for async_request in async_requests:

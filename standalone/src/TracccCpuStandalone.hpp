@@ -120,7 +120,7 @@ public:
 
     void initializePipeline();
     void runPipeline(std::vector<traccc::io::csv::cell> cells);
-    std::vector<traccc::io::csv::cell> read_from_array(const std::vector<std::vector<double>> &data);
+    std::vector<traccc::io::csv::cell> read_from_array(const std::vector<std::vector<std::string>> &data);
 };
 
 void TracccClusterStandalone::initializePipeline()
@@ -174,7 +174,7 @@ std::vector<traccc::io::csv::cell> read_csv(const std::string &filename)
     return cells;
 }
 
-std::vector<traccc::io::csv::cell> TracccClusterStandalone::read_from_array(const std::vector<std::vector<double>> &data)
+std::vector<traccc::io::csv::cell> TracccClusterStandalone::read_from_array(const std::vector<std::vector<std::string>> &data)
 {
     std::vector<traccc::io::csv::cell> cells;
 
@@ -183,13 +183,13 @@ std::vector<traccc::io::csv::cell> TracccClusterStandalone::read_from_array(cons
         if (row.size() != 6)
             continue; // ensure each row contains exactly 6 elements
         traccc::io::csv::cell iocell;
-        // FIXME needs to decode to the correct type
-        iocell.geometry_id = static_cast<std::uint64_t>(row[0]);
-        iocell.hit_id = static_cast<int>(row[1]);
-        iocell.channel0 = static_cast<int>(row[2]);
-        iocell.channel1 = static_cast<int>(row[3]);
-        iocell.timestamp = static_cast<int>(row[4]);
-        iocell.value = row[5];
+        iocell.geometry_id = static_cast<std::uint64_t>(std::stoull(row[0]));
+        iocell.hit_id = std::stoi(row[1]);
+        iocell.channel0 = std::stoi(row[2]);
+        iocell.channel1 = std::stoi(row[3]);
+        iocell.timestamp = std::stoi(row[4]);
+        iocell.value = std::stod(row[5]); // Assuming value is a double
+
         cells.push_back(iocell);
     }
 
@@ -215,7 +215,8 @@ std::map<std::uint64_t, std::map<traccc::cell, float, cell_order>> fill_cell_map
     return cellMap;
 }
 
-std::map<std::uint64_t, std::vector<traccc::cell>> create_result_container(const std::map<std::uint64_t, std::map<traccc::cell, float, cell_order>> &cellMap)
+std::map<std::uint64_t, std::vector<traccc::cell>> create_result_container(const std::map<std::uint64_t, 
+                                                                            std::map<traccc::cell, float, cell_order>> &cellMap)
 {
     std::map<std::uint64_t, std::vector<traccc::cell>> result;
     for (const auto &[geometry_id, cells] : cellMap)
@@ -256,7 +257,13 @@ std::map<std::uint64_t, std::vector<traccc::cell>> read_all_cells(const std::vec
     return result;
 }
 
-void read_cells(traccc::io::cell_reader_output &out, const std::vector<traccc::io::csv::cell> &cells, const traccc::geometry *geom, const traccc::digitization_config *dconfig, const std::map<std::uint64_t, detray::geometry::barcode> *barcode_map, bool deduplicate)
+void read_cells(traccc::io::cell_reader_output &out, 
+                const std::vector<traccc::io::csv::cell> &cells, 
+                const traccc::geometry *geom, 
+                const traccc::digitization_config *dconfig, 
+                const std::map<std::uint64_t, 
+                detray::geometry::barcode> *barcode_map, 
+                bool deduplicate)
 {
     auto cellsMap = (deduplicate ? read_deduplicated_cells(cells)
                                  : read_all_cells(cells));
