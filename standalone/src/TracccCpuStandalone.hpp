@@ -125,12 +125,11 @@ public:
 
 void TracccClusterStandalone::initializePipeline()
 {
-    m_detector_opts.detector_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_geometry_detray.json";
-    m_detector_opts.digitization_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-digi-geometric-config.json";
-    m_detector_opts.grid_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_surface_grids_detray.json";
-    m_detector_opts.use_detray_detector = true;
+    m_detector_opts.detector_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/tml_detector/trackml-detector.csv";
+    m_detector_opts.digitization_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/tml_detector/default-geometric-config-generic.json";
 
-    auto geom_data = traccc::io::read_geometry(m_detector_opts.detector_file, traccc::data_format::json);
+    auto geom_data = traccc::io::read_geometry(m_detector_opts.detector_file,
+                                               (m_detector_opts.use_detray_detector ? traccc::data_format::json : traccc::data_format::csv));
     m_surface_transforms = std::move(geom_data.first);
     m_barcode_map = std::move(geom_data.second);
 

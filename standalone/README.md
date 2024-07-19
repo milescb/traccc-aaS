@@ -13,32 +13,32 @@ cmake --build .
 Run within the build directory
 
 ```
-./TracccGpuStandalone $DATADIR/odd/geant4_10muon_100GeV/event000000000-cells.csv
+./TracccGpuStandalone $DATADIR/tml_pixels/event000000000-cells.csv
 ```
 
 The output should look something like:
 
 ```
-Measurement ID: 16
-Local coordinates: [-6.775, 32.725]
-Measurement ID: 17
-Local coordinates: [8.525, -7.075]
-Measurement ID: 18
-Local coordinates: [5.425, 15.775]
-Measurement ID: 19
-Local coordinates: [-12.675, 21.875]
-Measurement ID: 20
-Local coordinates: [-5.825, 9.025]
-Measurement ID: 21
-Local coordinates: [4.775, -6.70172]
-Measurement ID: 22
-Local coordinates: [4.675, -5.90643]
-Measurement ID: 23
-Local coordinates: [-10.825, -1.66034]
-Measurement ID: 24
-Local coordinates: [13.175, -2.08204]
-Measurement ID: 25
-Local coordinates: [-5.075, -10.725]
+Measurement ID: 416
+Local coordinates: [-0.575, -30.425]
+Measurement ID: 417
+Local coordinates: [-6.825, -20.775]
+Measurement ID: 418
+Local coordinates: [5.375, -33.775]
+Measurement ID: 419
+Local coordinates: [6.475, -20.525]
+Measurement ID: 420
+Local coordinates: [7.425, -34.775]
+Measurement ID: 421
+Local coordinates: [-1.575, -17.075]
+Measurement ID: 422
+Local coordinates: [-1.175, -34.625]
+Measurement ID: 423
+Local coordinates: [4.125, -33.475]
+Measurement ID: 424
+Local coordinates: [-3.675, -1.875]
+Measurement ID: 425
+Local coordinates: [6.375, -1.375]
 ```
 
 or to run the CPU version:

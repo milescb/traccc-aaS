@@ -10,10 +10,10 @@ python generate_json.py -i <input_file> -o <output_file>
 
 ## Perf Analyzer
 
-Run `perf_analyzer` with the following (after launching the server)
+Run `perf_analyzer` with the following:
 
 ```
-perf_analyzer -m traccc-gpu --input-data $DATADIR/../test_data/test_perf_data_odd.json
+perf_analyzer -m traccc-gpu --input-data $DATADIR/../test_data/test_perf_data.json
 ```
 
 ## Performance Plots
@@ -23,7 +23,7 @@ perf_analyzer -m traccc-gpu --input-data $DATADIR/../test_data/test_perf_data_od
 Run `perf_analyzer` with the CPU and GPU configuration
 
 ```
-perf_analyzer -m traccc-gpu --input-data $DATADIR/../test_data/test_perf_data_odd.json \
+perf_analyzer -m traccc-gpu --input-data $DATADIR/../test_data/test_perf_data.json \
     --concurrency-range <start>:<end>:<step> \
     --verbose-csv --collect-metrics \
     --measurement-interval 10000 -f out_gpu.csv 
