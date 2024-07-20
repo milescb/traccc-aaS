@@ -166,18 +166,20 @@ public:
 
     void initialize();
     void run(std::vector<traccc::io::csv::cell> cells);
-    std::vector<traccc::io::csv::cell> read_from_array(const std::vector<std::vector<std::string>> &data);
+    std::vector<traccc::io::csv::cell> read_from_array(const std::vector<std::uint64_t> &geometry_ids,
+                                                        const std::vector<std::vector<double>> &data);
 };
 
 void TracccGpuStandalone::initialize()
 {
     // HACK: hard code location of detector and digitization file
-    detector_opts.detector_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/tml_detector/trackml-detector.csv";
-    detector_opts.digitization_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/tml_detector/default-geometric-config-generic.json";
+    detector_opts.detector_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_geometry_detray.json";
+    detector_opts.digitization_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-digi-geometric-config.json";
+    detector_opts.grid_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_surface_grids_detray.json";
+    detector_opts.use_detray_detector = true;
 
     // read in geometry
-    auto geom_data = traccc::io::read_geometry(detector_opts.detector_file,
-                                            (detector_opts.use_detray_detector ? traccc::data_format::json : traccc::data_format::csv));
+    auto geom_data = traccc::io::read_geometry(detector_opts.detector_file, traccc::data_format::json);
     surface_transforms = std::move(geom_data.first);
     barcode_map = std::move(geom_data.second);
 
@@ -349,21 +351,38 @@ void read_cells(traccc::io::cell_reader_output &out,
     }
 }
 
-std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const std::vector<std::vector<std::string>> &data)
+std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const std::vector<std::uint64_t> &geometry_ids,
+                                                                            const std::vector<std::vector<double>> &data)
 {
     std::vector<traccc::io::csv::cell> cells;
 
-    for (const auto &row : data)
+    if (geometry_ids.size() != data.size())
     {
-        if (row.size() != 6)
-            continue; // ensure each row contains exactly 6 elements
+        throw std::runtime_error("Number of geometry IDs and data rows do not match.");
+    }
+
+    for (size_t i = 0; i < data.size(); ++i) 
+    {
+        const auto& row = data[i];
+        if (row.size() != 5)
+            continue; 
+
         traccc::io::csv::cell iocell;
-        iocell.geometry_id = static_cast<std::uint64_t>(std::stoull(row[0]));
-        iocell.hit_id = std::stoi(row[1]);
-        iocell.channel0 = std::stoi(row[2]);
-        iocell.channel1 = std::stoi(row[3]);
-        iocell.timestamp = std::stoi(row[4]);
-        iocell.value = std::stod(row[5]); // Assuming value is a double
+
+        if (i < geometry_ids.size()) 
+        {
+            iocell.geometry_id = geometry_ids[i];
+        } 
+        else 
+        {
+            continue;
+        }
+
+        iocell.hit_id = static_cast<int>(row[0]);
+        iocell.channel0 = static_cast<int>(row[1]);
+        iocell.channel1 = static_cast<int>(row[2]);
+        iocell.timestamp = static_cast<int>(row[3]);
+        iocell.value = row[4];
 
         cells.push_back(iocell);
     }

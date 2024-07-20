@@ -160,39 +160,68 @@ class ModelState : public BackendModel {
       TRITONBACKEND_Model* triton_model, ModelState** state);
   virtual ~ModelState() = default;
 
-  // Name of the input and output tensor
-  const std::string& InputTensorName() const { return input_name_; }
-  const std::string& OutputTensorName() const { return output_name_; }
+    // Name of the input and output tensor
+    const std::string &InputGeoIdTensorName() const { return input_geoid_name_; }
+    const std::string &InputCellsTensorName() const { return input_cells_name_; }
+    const std::string &OutputTensorName() const { return output_name_; }
 
-  // Datatype of the input and output tensor
-  TRITONSERVER_DataType TensorDataType() const { return datatype_; }
+    // Datatype of the input and output tensor
+    TRITONSERVER_DataType InputGeoIdTensorDataType() const { return input_geoid_datatype_; }
+    TRITONSERVER_DataType InputCellsTensorDataType() const { return input_cells_datatype_; }
+    TRITONSERVER_DataType OutputTensorDataType() const
+    {
+        return output_datatype_;
+    }
 
-  // Shape of the input and output tensor as given in the model
-  // configuration file. This shape will not include the batch
-  // dimension (if the model has one).
-  const std::vector<int64_t>& TensorNonBatchShape() const { return nb_shape_; }
+    // Shape of the input and output tensor as given in the model
+    // configuration file. This shape will not include the batch
+    // dimension (if the model has one).
+    // const std::vector<int64_t>& TensorNonBatchShape() const { return nb_shape_;
+    // }
 
-  // Shape of the input and output tensor, including the batch
-  // dimension (if the model has one). This method cannot be called
-  // until the model is completely loaded and initialized, including
-  // all instances of the model. In practice, this means that backend
-  // should only call it in TRITONBACKEND_ModelInstanceExecute.
-//   TRITONSERVER_Error* TensorShape(std::vector<int64_t>& shape);
+    // Shape of the input and output tensor, including the batch
+    // dimension (if the model has one). This method cannot be called
+    // until the model is completely loaded and initialized, including
+    // all instances of the model. In practice, this means that backend
+    // should only call it in TRITONBACKEND_ModelInstanceExecute.
+    const std::vector<int64_t> &InputGeoIdTensorNonBatchShape() const
+    {
+        return input_geoid_nb_shape_;
+    }
+    const std::vector<int64_t> &InputCellsTensorNonBatchShape() const
+    {
+        return input_cells_nb_shape_;
+    }
+    const std::vector<int64_t> &OutputTensorNonBatchShape() const
+    {
+        return output_nb_shape_;
+    }
 
-  // Validate that this model is supported by this backend.
-  TRITONSERVER_Error* ValidateModelConfig();
+    // Validate that this model is supported by this backend.
+    TRITONSERVER_Error *ValidateModelConfig();
+
+    //   std::string model_path;
+    int64_t cellFeatures;
 
  private:
   ModelState(TRITONBACKEND_Model* triton_model);
 
-  std::string input_name_;
-  std::string output_name_;
+    std::string input_geoid_name_;
+    std::string input_cells_name_;
+    std::string output_name_;
 
-  TRITONSERVER_DataType datatype_;
+    TRITONSERVER_DataType input_geoid_datatype_;
+    TRITONSERVER_DataType input_cells_datatype_;
+    TRITONSERVER_DataType output_datatype_;
 
-  bool shape_initialized_;
-  std::vector<int64_t> nb_shape_;
-  std::vector<int64_t> shape_;
+    std::vector<int64_t> input_geoid_nb_shape_;
+    std::vector<int64_t> input_cells_nb_shape_;
+    std::vector<int64_t> input_geoid_shape_;
+    std::vector<int64_t> input_cells_shape_;
+    std::vector<int64_t> output_nb_shape_;
+    std::vector<int64_t> output_shape_;
+
+    bool shape_initialized_;
 };
 
 //! Also possible problems in this function!
@@ -251,81 +280,90 @@ ModelState::Create(TRITONBACKEND_Model* triton_model, ModelState** state)
 TRITONSERVER_Error*
 ModelState::ValidateModelConfig()
 {
-  // If verbose logging is enabled, dump the model's configuration as
-  // JSON into the console output.
-  if (TRITONSERVER_LogIsEnabled(TRITONSERVER_LOG_VERBOSE)) {
+    // If verbose logging is enabled, dump the model's configuration as
+    // JSON into the console output.
+    if (TRITONSERVER_LogIsEnabled(TRITONSERVER_LOG_VERBOSE)) {
     common::TritonJson::WriteBuffer buffer;
     RETURN_IF_ERROR(ModelConfig().PrettyWrite(&buffer));
     LOG_MESSAGE(
         TRITONSERVER_LOG_VERBOSE,
         (std::string("model configuration:\n") + buffer.Contents()).c_str());
-  }
+    }
 
-  // ModelConfig is the model configuration as a TritonJson
-  // object. Use the TritonJson utilities to parse the JSON and
-  // determine if the configuration is supported by this backend.
-  common::TritonJson::Value inputs, outputs;
-  RETURN_IF_ERROR(ModelConfig().MemberAsArray("input", &inputs));
-  RETURN_IF_ERROR(ModelConfig().MemberAsArray("output", &outputs));
+    // ModelConfig is the model configuration as a TritonJson
+    // object. Use the TritonJson utilities to parse the JSON and
+    // determine if the configuration is supported by this backend.
+    common::TritonJson::Value inputs, outputs;
+    RETURN_IF_ERROR(ModelConfig().MemberAsArray("input", &inputs));
+    RETURN_IF_ERROR(ModelConfig().MemberAsArray("output", &outputs));
 
-  // The model must have exactly 1 input and 1 output.
-  RETURN_ERROR_IF_FALSE(
-      inputs.ArraySize() == 1, TRITONSERVER_ERROR_INVALID_ARG,
-      std::string("model configuration must have 1 input"));
-  RETURN_ERROR_IF_FALSE(
-      outputs.ArraySize() == 1, TRITONSERVER_ERROR_INVALID_ARG,
-      std::string("model configuration must have 1 output"));
+        // The model must have exactly 2 inputs and 1 output.
+    RETURN_ERROR_IF_FALSE(
+        inputs.ArraySize() == 2, TRITONSERVER_ERROR_INVALID_ARG,
+        std::string("model configuration must have 2 inputs"));
+    RETURN_ERROR_IF_FALSE(
+        outputs.ArraySize() == 1, TRITONSERVER_ERROR_INVALID_ARG,
+        std::string("model configuration must have 1 output"));
 
-  common::TritonJson::Value input, output;
-  RETURN_IF_ERROR(inputs.IndexAsObject(0, &input));
-  RETURN_IF_ERROR(outputs.IndexAsObject(0, &output));
+    common::TritonJson::Value input_geoid, input_cells, output;
+    RETURN_IF_ERROR(inputs.IndexAsObject(0, &input_geoid));
+    RETURN_IF_ERROR(inputs.IndexAsObject(1, &input_cells));
+    RETURN_IF_ERROR(outputs.IndexAsObject(0, &output));
 
-  // Record the input and output name in the model state.
-  const char* input_name;
-  size_t input_name_len;
-  RETURN_IF_ERROR(input.MemberAsString("name", &input_name, &input_name_len));
-  input_name_ = std::string(input_name);
+    // Record the input and output name in the model state.
+    const char *input_geoid_name, *input_cells_name;
+    size_t input_geoid_len, input_cells_len;
+    RETURN_IF_ERROR(input_geoid.MemberAsString("name", &input_geoid_name, &input_geoid_len));
+    RETURN_IF_ERROR(input_cells.MemberAsString("name", &input_cells_name, &input_cells_len));
+    input_geoid_name_ = std::string(input_geoid_name);
+    input_cells_name_ = std::string(input_cells_name);
 
-  const char* output_name;
-  size_t output_name_len;
-  RETURN_IF_ERROR(
-      output.MemberAsString("name", &output_name, &output_name_len));
-  output_name_ = std::string(output_name);
+    const char *output_name;
+    size_t output_name_len;
+    RETURN_IF_ERROR(
+        output.MemberAsString("name", &output_name, &output_name_len));
+    output_name_ = std::string(output_name);
 
-  // Input and output must have same datatype
-  std::string input_dtype, output_dtype;
-  RETURN_IF_ERROR(input.MemberAsString("data_type", &input_dtype));
-  RETURN_IF_ERROR(output.MemberAsString("data_type", &output_dtype));
-//   RETURN_ERROR_IF_FALSE(
-//       input_dtype == output_dtype, TRITONSERVER_ERROR_INVALID_ARG,
-//       std::string("expected input and output datatype to match, got ") +
-//           input_dtype + " and " + output_dtype);
-  datatype_ = ModelConfigDataTypeToTritonServerDataType(input_dtype);
+    // Input and output must have same datatype
+    std::string input_geoid_dtype, input_cells_dtype, output_dtype;
+    RETURN_IF_ERROR(input_geoid.MemberAsString("data_type", &input_geoid_dtype));
+    RETURN_IF_ERROR(input_cells.MemberAsString("data_type", &input_cells_dtype));
+    RETURN_IF_ERROR(output.MemberAsString("data_type", &output_dtype));
+    // RETURN_ERROR_IF_FALSE(
+    //     input_dtype == output_dtype, TRITONSERVER_ERROR_INVALID_ARG,
+    //     std::string("expected input and output datatype to match, got ") +
+    //         input_dtype + " and " + output_dtype);
+    input_geoid_datatype_ = ModelConfigDataTypeToTritonServerDataType(input_geoid_dtype);
+    input_cells_datatype_ = ModelConfigDataTypeToTritonServerDataType(input_cells_dtype);
+    output_datatype_ = ModelConfigDataTypeToTritonServerDataType(output_dtype);
 
-  // Input and output must have same shape. Reshape is not supported
-  // on either input or output so flag an error is the model
-  // configuration uses it.
-  triton::common::TritonJson::Value reshape;
-  RETURN_ERROR_IF_TRUE(
-      input.Find("reshape", &reshape), TRITONSERVER_ERROR_UNSUPPORTED,
-      std::string("reshape not supported for input tensor"));
-  RETURN_ERROR_IF_TRUE(
-      output.Find("reshape", &reshape), TRITONSERVER_ERROR_UNSUPPORTED,
-      std::string("reshape not supported for output tensor"));
+    // Input and output must have same shape. Reshape is not supported
+    // on either input or output so flag an error is the model
+    // configuration uses it.
+    // triton::common::TritonJson::Value reshape;
+    // RETURN_ERROR_IF_TRUE(
+    //     input.Find("reshape", &reshape), TRITONSERVER_ERROR_UNSUPPORTED,
+    //     std::string("reshape not supported for input tensor"));
+    // RETURN_ERROR_IF_TRUE(
+    //     output.Find("reshape", &reshape), TRITONSERVER_ERROR_UNSUPPORTED,
+    //     std::string("reshape not supported for output tensor"));
 
-  std::vector<int64_t> input_shape, output_shape;
-  RETURN_IF_ERROR(backend::ParseShape(input, "dims", &input_shape));
-  RETURN_IF_ERROR(backend::ParseShape(output, "dims", &output_shape));
+    std::vector<int64_t> input_geoid_shape, input_cells_shape, output_shape;
+    RETURN_IF_ERROR(backend::ParseShape(input_geoid, "dims", &input_geoid_shape));
+    RETURN_IF_ERROR(backend::ParseShape(input_cells, "dims", &input_cells_shape));
+    RETURN_IF_ERROR(backend::ParseShape(output, "dims", &output_shape));
 
-//   RETURN_ERROR_IF_FALSE(
-//       input_shape == output_shape, TRITONSERVER_ERROR_INVALID_ARG,
-//       std::string("expected input and output shape to match, got ") +
-//           backend::ShapeToString(input_shape) + " and " +
-//           backend::ShapeToString(output_shape));
+    // RETURN_ERROR_IF_FALSE(
+    //     input_shape == output_shape, TRITONSERVER_ERROR_INVALID_ARG,
+    //     std::string("expected input and output shape to match, got ") +
+    //         backend::ShapeToString(input_shape) + " and " +
+    //         backend::ShapeToString(output_shape));
 
-  nb_shape_ = input_shape;
+    input_geoid_nb_shape_ = input_geoid_shape;
+    input_cells_nb_shape_ = input_cells_shape;
+    output_nb_shape_ = output_shape;
 
-  return nullptr;  // success
+    return nullptr; // success
 }
 
 extern "C" {
@@ -576,18 +614,26 @@ TRITONBACKEND_ModelInstanceExecute(
     std::vector<std::pair<TRITONSERVER_MemoryType, int64_t>> allowed_input_types =
         {{TRITONSERVER_MEMORY_CPU_PINNED, 0}, {TRITONSERVER_MEMORY_CPU, 0}};
 
-    const char* input_buffer;
-    size_t input_buffer_byte_size;
-    TRITONSERVER_MemoryType input_buffer_memory_type;
-    int64_t input_buffer_memory_type_id;
+    const char *input_geoid_buffer, *input_cells_buffer;
+    size_t input_geoid_buffer_byte_size, input_cells_buffer_byte_size;
+    TRITONSERVER_MemoryType input_geoid_buffer_memory_type, input_cells_buffer_memory_type;
+    int64_t input_geoid_buffer_memory_type_id, input_cells_buffer_memory_type_id;
 
     RESPOND_ALL_AND_SET_NULL_IF_ERROR(
         responses, request_count,
         collector.ProcessTensor(
-            model_state->InputTensorName().c_str(), nullptr /* existing_buffer */,
-            0 /* existing_buffer_byte_size */, allowed_input_types, &input_buffer,
-            &input_buffer_byte_size, &input_buffer_memory_type,
-            &input_buffer_memory_type_id));
+            model_state->InputGeoIdTensorName().c_str(), nullptr /* existing_buffer */,
+            0 /* existing_buffer_byte_size */, allowed_input_types, &input_geoid_buffer,
+            &input_geoid_buffer_byte_size, &input_geoid_buffer_memory_type,
+            &input_geoid_buffer_memory_type_id));
+
+    RESPOND_ALL_AND_SET_NULL_IF_ERROR(
+        responses, request_count,
+        collector.ProcessTensor(
+            model_state->InputCellsTensorName().c_str(), nullptr /* existing_buffer */,
+            0 /* existing_buffer_byte_size */, allowed_input_types, &input_cells_buffer,
+            &input_cells_buffer_byte_size, &input_cells_buffer_memory_type,
+            &input_cells_buffer_memory_type_id));
 
     // Finalize the collector. If 'true' is returned, 'input_buffer'
     // will not be valid until the backend synchronizes the CUDA
@@ -595,10 +641,11 @@ TRITONBACKEND_ModelInstanceExecute(
     // this backend, GPU is not supported and so no CUDA sync should
     // be needed; so if 'true' is returned simply log an error.
     const bool need_cuda_input_sync = collector.Finalize();
-    if (need_cuda_input_sync) {
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_ERROR,
-        "'traccc' backend: unexpected CUDA sync required by collector");
+    if (need_cuda_input_sync)
+    {
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_ERROR,
+            "'Traccc' backend: unexpected CUDA sync required by collector");
     }
 
     // 'input_buffer' contains the batched input tensor. The backend can
@@ -609,88 +656,50 @@ TRITONBACKEND_ModelInstanceExecute(
 
     uint64_t compute_start_ns = 0;
     SET_TIMESTAMP(compute_start_ns);
+    TRITONSERVER_MemoryType output_buffer_memory_type = input_cells_buffer_memory_type;
+    int64_t output_buffer_memory_type_id = input_cells_buffer_memory_type_id;
 
-    // const char* output_buffer = input_buffer;
-    TRITONSERVER_MemoryType output_buffer_memory_type = input_buffer_memory_type;
-    int64_t output_buffer_memory_type_id = input_buffer_memory_type_id;
-
-    // Determine the number of strings in the input buffer
-    size_t num_strings = 0;
-    for (size_t i = 0; i < input_buffer_byte_size; ++i) {
-        if (input_buffer[i] == '\0') {
-            ++num_strings;
-        }
-    }
+    // Determine the number of floats in the input buffer
+    size_t num_uint_geoid = input_geoid_buffer_byte_size / sizeof(std::uint64_t);
+    size_t num_floats_cells = input_cells_buffer_byte_size / sizeof(double);
 
     // Convert the input buffer to a float pointer
-    const char* char_ptr = reinterpret_cast<const char*>(input_buffer);
-    ++char_ptr; // Skip the first null terminator
+    const std::uint64_t *uint_geoid_ptr = reinterpret_cast<const std::uint64_t *>(input_geoid_buffer);
+    const double *double_ptr = reinterpret_cast<const double *>(input_cells_buffer);
 
-    // initialize input
-    std::vector<std::vector<std::string>> input_data;
-
-    // Assuming each row in the input 2D array has 6 elements as per the config
-    size_t num_features = 6;
-    size_t num_rows = num_strings / num_features;
+    // Assuming each row in the input cells 2D array has 5 elements as per the config
+    size_t num_features_cells = 5;
+    size_t num_rows_cells = num_floats_cells / num_features_cells;
 
     // Convert the input buffer to a 2D vector
-    std::vector<std::string> current_row;
-    std::string current_string;
+    std::vector<std::vector<double>> input_data_cells;
+    std::vector<std::uint64_t> input_data_geoid;
+    input_data_geoid.reserve(num_uint_geoid);
+    input_data_cells.reserve(num_rows_cells);
 
-    // Process the buffer
-    for (size_t i = 0; i < num_rows; ++i) 
-    {
-        current_row.clear();
-        for (size_t j = 0; j < num_features; ++j) 
-        {
-            // Reset the current string
-            current_string.clear();
-
-            // Skip any leading null terminators (empty strings)
-            while (*char_ptr == '\0' && static_cast<size_t>(char_ptr - input_buffer) < input_buffer_byte_size) 
-            {
-                ++char_ptr; // Move to the next character
-            }
-
-            // Check if we've reached the end of the buffer
-            if (static_cast<size_t>(char_ptr - input_buffer) >= input_buffer_byte_size) 
-            {
-                break; // Exit the loop if the end of the buffer is reached
-            }
-
-            // Read characters until a null terminator is found
-            while (*char_ptr != '\0') 
-            {
-                current_string += *char_ptr;
-                ++char_ptr; // Move to the next character
-            }
-
-            // Skip the null terminator for the next string
-            ++char_ptr;
-
-            // Add the current string to the current row if it's not empty
-            if (!current_string.empty()) 
-            {
-                current_row.push_back(current_string);
-            }
+    // FIXME type 
+    for (size_t i = 0; i < num_rows_cells; ++i) {
+        std::vector<double> row;
+        row.reserve(num_features_cells);
+        for (size_t j = 0; j < num_features_cells; ++j) {
+            row.push_back(static_cast<double>(double_ptr[i * num_features_cells + j]));
         }
-        // Add the current row to the input data
-        if (!current_row.empty()) {
-            input_data.push_back(current_row);
-        }
+        input_data_cells.push_back(row);
+        input_data_geoid.push_back(uint_geoid_ptr[i]);
     }
 
-    int numCells = input_data.size();
+    int numCells = input_data_cells.size();
     std::cout << "Number of cells received: " << numCells  << std::endl;
     for (int i = 0; i < 5; ++i) {
         std::cout << "Cell " << i << ": ";
-        for (size_t j = 0; j < num_features; ++j) {
-            std::cout << input_data[i][j] << " ";
+        std::cout << input_data_geoid[i] << " ";
+        for (size_t j = 0; j < num_features_cells; ++j) {
+            std::cout << input_data_cells[i][j] << " ";
         }
         std::cout << std::endl;
     }
-    // MARK: Run the pipeline
-    std::vector<traccc::io::csv::cell> cells = instance_state->traccc_gpu_standalone_->read_from_array(input_data);
+
+    std::vector<traccc::io::csv::cell> cells = instance_state->traccc_gpu_standalone_->read_from_array(input_data_geoid, input_data_cells);
     instance_state->traccc_gpu_standalone_->run(cells);
 
     std::vector<int64_t> output_data(
@@ -746,7 +755,7 @@ TRITONBACKEND_ModelInstanceExecute(
         nullptr /* stream*/);
 
     responder.ProcessTensor(
-        model_state->OutputTensorName().c_str(), model_state->TensorDataType(),
+        model_state->OutputTensorName().c_str(), model_state->OutputTensorDataType(),
         output_tensor_shape, output_buffer, output_buffer_memory_type,
         output_buffer_memory_type_id);
 
