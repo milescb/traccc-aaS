@@ -6,17 +6,22 @@ def main():
     # Read the CSV file
     csv_file_path = args.input
     df = pd.read_csv(csv_file_path)
-
-    # Convert DataFrame to flattened list in row-major format
-    content = df.values.flatten().tolist()
+    
+    # make two dfs for geometry id and rest of the features
+    geo_id = df['geometry_id'].tolist()
+    cells = df.drop('geometry_id', axis=1).values.flatten().tolist()
 
     # Define JSON structure
     json_data = {
         "data": [
             {
+                "GEOMETRY_ID": {
+                    "content": geo_id,
+                    "shape": [len(df)]
+                },
                 "FEATURES": {
-                    "content": content,
-                    "shape": [len(df), len(df.columns)]
+                    "content": cells,
+                    "shape": [len(df), len(df.columns)-1]
                 }
             }
         ]

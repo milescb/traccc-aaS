@@ -54,7 +54,7 @@ def process_csv_dir(directory):
                 cpu_data_instances[instance_number(filename)] = cpu_data
     return cpu_data_instances, gpu_data_instances
 
-def plot_instance_cpu_gpu(cpu_data, gpu_data, concurrency=3, 
+def plot_instance_cpu_gpu(cpu_data, gpu_data, concurrency=1, 
                           variable='Inferences/Second',
                           ylabel='Throughput (infer/sec)',
                           save_name='instances_vs_throughput_compare_con3.pdf'):
@@ -80,13 +80,12 @@ def plot_instance_cpu_gpu(cpu_data, gpu_data, concurrency=3,
     plt.legend()
     plt.grid(True)
     
-    plt.savefig(f'plots/{save_name}', bbox_inches='tight')
+    plt.savefig(f'{args.output_directory}/{save_name}', bbox_inches='tight')
 
     
 def plot_var_vs_instance(data_dict, 
                          variable='Inferences/Second', 
                          ylabel='GPU Throughput (infer/sec)',
-                         save_path='plots',
                          save_name='instances_vs_throughput_gpu.pdf'):
     
     instances = sorted(data_dict.keys())
@@ -104,7 +103,7 @@ def plot_var_vs_instance(data_dict,
     plt.legend()
     plt.grid(True)
     
-    plt.savefig(f'{save_path}/{save_name}', bbox_inches='tight')
+    plt.savefig(f'{args.output_directory}/{save_name}', bbox_inches='tight')
 
 def main():
     
@@ -142,6 +141,9 @@ if __name__ == '__main__':
     parser.add_argument("-i", "--input-directory", 
                         default='data/instances',
                         type=str, help="Input directory path")
+    parser.add_argument("-o", "--output-directory", 
+                        default='plots',
+                        type=str, help="Output directory path")
     args = parser.parse_args()
     
     main()
