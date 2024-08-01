@@ -84,7 +84,7 @@ def main():
         # Start Triton server
         triton_command = f"tritonserver --model-repository={args.model_repository}"
         run_command_in_tmux(session_name, f"server", f"{triton_command}")
-        time.sleep(30)
+        time.sleep(90)
 
         # Run perf_analyzer for GPU
         gpu_output_file = f"{args.output_directory}/gpu_{instance_count}instance.csv"
@@ -102,7 +102,7 @@ def main():
 
         # Stop Triton server
         subprocess.run(f'tmux send-keys -t {session_name}:server C-c', shell=True)
-        time.sleep(10)
+        time.sleep(20)
     
     plot_command = f"python plot_model_instance_studies.py -i {args.output_directory} -o {args.output_directory}"   
     run_command_in_tmux_and_wait(session_name, f"client", plot_command)
