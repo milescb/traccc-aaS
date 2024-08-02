@@ -1,6 +1,10 @@
 #include <exception>
 #include <iomanip>
 #include <iostream>
+#include <vector>
+#include <string>
+#include <fstream>
+#include <sstream>
 #include <memory>
 
 #include <cuda_runtime.h>
@@ -178,6 +182,7 @@ public:
     void initialize();
     void run(std::vector<traccc::io::csv::cell> cells);
     std::vector<traccc::io::csv::cell> read_from_array(const std::vector<std::vector<double>> &data);
+    std::vector<std::vector<double>> read_from_csv(const std::string &filename);
 };
 
 void TracccGpuStandalone::initialize()
@@ -198,6 +203,8 @@ void TracccGpuStandalone::initialize()
     // Read the digitization configuration file
     digi_cfg = std::make_unique<traccc::digitization_config>(traccc::io::read_digitization_config(detector_opts.digitization_file));
 
+    stream.synchronize();
+
     return;
 }
 
@@ -207,6 +214,8 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
 
     // Read the cells from the relevant event file into host memory.
     read_cells(read_out, cells, &surface_transforms, digi_cfg.get(), barcode_map.get(), true);
+
+    stream.synchronize();
 
     const traccc::cell_collection_types::host& cells_per_event =
         read_out.cells;
@@ -226,7 +235,7 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
             0, *mr.host);
     measurements_cuda_buffer = ca_cuda(cells_buffer, modules_buffer);
     ms_cuda(measurements_cuda_buffer);
-    
+
     stream.synchronize();
 
     copy(measurements_cuda_buffer, measurements_per_event_cuda)->wait();
@@ -381,4 +390,35 @@ std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const st
     }
 
     return cells;
+}
+
+std::vector<std::vector<double>> TracccGpuStandalone::read_from_csv(const std::string &filename)
+{
+    std::vector<std::vector<double>> data;
+    std::ifstream file(filename);
+    
+    if (!file.is_open()) {
+        std::cerr << "Could not open the file!" << std::endl;
+        return data;
+    }
+
+    std::string line;
+    std::getline(file, line);
+
+    while (std::getline(file, line)) {
+        std::vector<double> row;
+        std::stringstream ss(line);
+        std::string value;
+        
+        // Read each value separated by a comma
+        while (std::getline(ss, value, ',')) {
+            row.push_back(std::stod(value));
+        }
+        
+        data.push_back(row);
+    }
+
+    file.close();
+    std::cout << "Read " << data.size() << " rows from " << filename << std::endl;
+    return data;
 }

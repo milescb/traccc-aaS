@@ -11,6 +11,8 @@ def clean_pandas_df(df):
     for index, row in df.iterrows():
         # Split the cell content by ';' to get individual GPU utilizations
         gpus = row['Avg GPU Utilization'].rstrip(';').split(';')
+        gpu_memory = row['Max GPU Memory Usage'].rstrip(';').split(';')
+        gpu_total_memory = row['Total GPU Memory'].rstrip(';').split(';')
         
         for i, gpu in enumerate(gpus):
             _, utilization = gpu.split(':')
@@ -20,6 +22,24 @@ def clean_pandas_df(df):
             if new_col_name not in new_columns:
                 new_columns[new_col_name] = [None] * len(df) 
             new_columns[new_col_name][index] = pd.to_numeric(utilization, errors='coerce') * 100
+            
+        for i, mem in enumerate(gpu_memory):
+            _, memory = mem.split(':')
+            new_col_name = f'gpu_memory_{i}_GB'
+            
+            # Add the memory value to the new_columns dictionary
+            if new_col_name not in new_columns:
+                new_columns[new_col_name] = [None] * len(df) 
+            new_columns[new_col_name][index] = pd.to_numeric(memory, errors='coerce') * 1e-9
+            
+        for i, mem in enumerate(gpu_total_memory):
+            _, memory = mem.split(':')
+            new_col_name = f'gpu_total_memory_{i}_GB'
+            
+            # Add the memory value to the new_columns dictionary
+            if new_col_name not in new_columns:
+                new_columns[new_col_name] = [None] * len(df) 
+            new_columns[new_col_name][index] = pd.to_numeric(memory, errors='coerce') * 1e-9
     
     # Add the new columns to the DataFrame
     for new_col_name, values in new_columns.items():
@@ -27,8 +47,15 @@ def clean_pandas_df(df):
         
     gpu_util_columns = [col for col in df.columns if 'gpu_util_' in col]
     df['total_gpu_usage'] = df[gpu_util_columns].sum(axis=1)
+    
+    gpu_highest_memory_columns = [col for col in df.columns if 'gpu_memory_' in col]
+    df['max_gpu_memory'] = df[gpu_highest_memory_columns].max(axis=1)
+    
+    df['percent_gpu_memory'] = (df['max_gpu_memory'] / df['gpu_total_memory_0_GB']) * 100
         
     df.drop('Avg GPU Utilization', axis=1, inplace=True)
+    df.drop('Max GPU Memory Usage', axis=1, inplace=True)
+    df.drop('Total GPU Memory', axis=1, inplace=True)
     
     return df
 
@@ -54,7 +81,7 @@ def process_csv_dir(directory):
                 cpu_data_instances[instance_number(filename)] = cpu_data
     return cpu_data_instances, gpu_data_instances
 
-def plot_instance_cpu_gpu(cpu_data, gpu_data, concurrency=3, 
+def plot_instance_cpu_gpu(cpu_data, gpu_data, concurrency=1, 
                           variable='Inferences/Second',
                           ylabel='Throughput (infer/sec)',
                           save_name='instances_vs_throughput_compare_con3.pdf'):
@@ -80,13 +107,12 @@ def plot_instance_cpu_gpu(cpu_data, gpu_data, concurrency=3,
     plt.legend()
     plt.grid(True)
     
-    plt.savefig(f'plots/{save_name}', bbox_inches='tight')
+    plt.savefig(f'{args.output_directory}/{save_name}', bbox_inches='tight')
 
     
 def plot_var_vs_instance(data_dict, 
                          variable='Inferences/Second', 
                          ylabel='GPU Throughput (infer/sec)',
-                         save_path='plots',
                          save_name='instances_vs_throughput_gpu.pdf'):
     
     instances = sorted(data_dict.keys())
@@ -104,7 +130,7 @@ def plot_var_vs_instance(data_dict,
     plt.legend()
     plt.grid(True)
     
-    plt.savefig(f'{save_path}/{save_name}', bbox_inches='tight')
+    plt.savefig(f'{args.output_directory}/{save_name}', bbox_inches='tight')
 
 def main():
     
@@ -126,6 +152,14 @@ def main():
                          variable='total_gpu_usage',
                          ylabel='GPU Utilization (%)',
                          save_name='instances_vs_gpu_utilization.pdf')
+    plot_var_vs_instance(gpu_data_instances,
+                         variable='max_gpu_memory',
+                         ylabel='GPU Memory Usage (GB)',
+                         save_name='instances_vs_gpu_memory.pdf')
+    plot_var_vs_instance(gpu_data_instances,
+                         variable='percent_gpu_memory',
+                         ylabel='GPU Memory Usage (%)',
+                         save_name='instances_vs_gpu_memory_percent.pdf')
     
     for i in range(1, 6):
         plot_instance_cpu_gpu(cpu_data_instances, gpu_data_instances, concurrency=i,
@@ -142,6 +176,9 @@ if __name__ == '__main__':
     parser.add_argument("-i", "--input-directory", 
                         default='data/instances',
                         type=str, help="Input directory path")
+    parser.add_argument("-o", "--output-directory", 
+                        default='plots',
+                        type=str, help="Output directory path")
     args = parser.parse_args()
     
     main()
