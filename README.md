@@ -14,6 +14,12 @@ A large portion of this work is based on the CPU version included here developed
 
 ## Running out of the box
 
+First, clone the repository with
+
+```
+git clone --recurse-submodules git@github.com:milescb/traccc-aaS.git
+```
+
 ### Docker
 
 A docker built for the triton server can be found at `docexoty/tritonserver:latest`. To run this do
