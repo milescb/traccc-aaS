@@ -6,7 +6,12 @@
 #include "traccc/cuda/clusterization/clusterization_algorithm.hpp"
 #include "traccc/cuda/clusterization/measurement_sorting_algorithm.hpp"
 #include "traccc/cuda/clusterization/spacepoint_formation_algorithm.hpp"
+#include "traccc/cuda/finding/finding_algorithm.hpp"
+#include "traccc/cuda/fitting/fitting_algorithm.hpp"
+#include "traccc/cuda/seeding/seeding_algorithm.hpp"
+#include "traccc/cuda/seeding/track_params_estimation.hpp"
 #include "traccc/cuda/utils/stream.hpp"
+#include "traccc/device/container_d2h_copy_alg.hpp"
 
 // io
 #include "traccc/io/read_cells.hpp"
@@ -22,19 +27,31 @@
 #include "traccc/options/input_data.hpp"
 #include "traccc/options/performance.hpp"
 #include "traccc/options/program_options.hpp"
+#include "traccc/options/program_options.hpp"
+#include "traccc/options/track_finding.hpp"
+#include "traccc/options/track_propagation.hpp"
+#include "traccc/options/track_resolution.hpp"
+#include "traccc/options/track_seeding.hpp"
 #include "traccc/edm/cell.hpp"
 
-// #include "traccc/options/track_finding.hpp"
-// #include "traccc/options/track_propagation.hpp"
-// #include "traccc/options/track_seeding.hpp"
-#include "traccc/performance/collection_comparator.hpp"
-#include "traccc/performance/container_comparator.hpp"
-#include "traccc/performance/timer.hpp"
+#include "traccc/options/track_finding.hpp"
+#include "traccc/options/track_propagation.hpp"
+#include "traccc/options/track_seeding.hpp"
+#include "traccc/seeding/seeding_algorithm.hpp"
+#include "traccc/seeding/track_params_estimation.hpp"
+#include "traccc/finding/finding_algorithm.hpp"
+#include "traccc/fitting/fitting_algorithm.hpp"
+// #include "traccc/performance/collection_comparator.hpp"
+// #include "traccc/performance/container_comparator.hpp"
+// #include "traccc/performance/timer.hpp"
 
 // Detray include(s).
 #include "detray/core/detector.hpp"
 #include "detray/detectors/bfield.hpp"
 #include "detray/io/frontend/detector_reader.hpp"
+#include "detray/navigation/navigator.hpp"
+#include "detray/propagator/propagator.hpp"
+#include "detray/propagator/rk_stepper.hpp"
 
 // VecMem include(s).
 #include <vecmem/memory/cuda/device_memory_resource.hpp>
@@ -121,6 +138,29 @@ void read_cells(traccc::io::cell_reader_output &out,
                 const std::map<std::uint64_t, detray::geometry::barcode> *barcode_map, 
                 bool deduplicate);
 
+// Type definitions
+using host_detector_type = detray::detector<detray::default_metadata,
+                                            detray::host_container_types>;
+using device_detector_type =
+    detray::detector<detray::default_metadata,
+                        detray::device_container_types>;
+using stepper_type =
+    detray::rk_stepper<detray::bfield::const_field_t::view_t,
+                        host_detector_type::algebra_type,
+                        detray::constrained_step<>>;
+using host_navigator_type = detray::navigator<const host_detector_type>;
+using device_navigator_type = detray::navigator<const device_detector_type>;
+
+using host_finding_algorithm =
+    traccc::finding_algorithm<stepper_type, host_navigator_type>;
+using device_finding_algorithm =
+    traccc::cuda::finding_algorithm<stepper_type, device_navigator_type>;
+
+using host_fitting_algorithm = 
+    traccc::fitting_algorithm<traccc::kalman_fitter<stepper_type, host_navigator_type>>;
+using device_fitting_algorithm =  
+    traccc::cuda::fitting_algorithm<traccc::kalman_fitter<stepper_type, device_navigator_type>>;
+
 class TracccGpuStandalone
 {
 private:
@@ -129,34 +169,63 @@ private:
     vecmem::host_memory_resource host_mr;
     vecmem::cuda::host_memory_resource cuda_host_mr;
     vecmem::cuda::device_memory_resource device_mr;
-    traccc::memory_resource mr{device_mr, &cuda_host_mr};
+    traccc::memory_resource mr;
     // CUDA types used.
     traccc::cuda::stream stream;
-    vecmem::cuda::async_copy copy{stream.cudaStream()};
+    vecmem::cuda::async_copy copy;
     // opt inputs
-    traccc::opts::detector detector_opts;
     traccc::opts::input_data input_opts;
     traccc::opts::clusterization clusterization_opts;
     traccc::opts::accelerator accelerator_opts;
+    traccc::opts::detector detector_opts;
+    traccc::opts::track_seeding seeding_opts;
+    traccc::opts::track_finding finding_opts;
+    traccc::opts::track_propagation propagation_opts;
+    detray::propagation::config propagation_config;
     // detector options
     traccc::geometry surface_transforms;
     std::unique_ptr<traccc::digitization_config> digi_cfg;
     std::unique_ptr<std::map<std::uint64_t, detray::geometry::barcode>> barcode_map;
-    detray::detector<detray::default_metadata,
-        detray::host_container_types> host_detector{host_mr};
-    detray::detector<detray::default_metadata,
-        detray::host_container_types>::buffer_type device_detector;
-    // detray::io::detector_reader_config cfg;
+    host_detector_type host_detector;
+    host_detector_type::buffer_type device_detector;
+    host_detector_type::view_type device_detector_view;
+    detray::io::detector_reader_config cfg;
+    host_finding_algorithm::config_type finding_cfg;
+    host_fitting_algorithm::config_type fitting_cfg;
     // algorithms
     traccc::cuda::clusterization_algorithm ca_cuda;
     traccc::cuda::measurement_sorting_algorithm ms_cuda;
-    traccc::measurement_collection_types::host measurements_per_event_cuda;
+    traccc::cuda::spacepoint_formation_algorithm sf_cuda;
+    traccc::cuda::seeding_algorithm sa_cuda;
+    traccc::cuda::track_params_estimation tp_cuda;
+    device_finding_algorithm finding_alg_cuda;
+    device_fitting_algorithm fitting_alg_cuda;
+    // field
+    traccc::vector3 field_vec;
+    detray::bfield::const_field_t field;
+    // copying to cpu
+    traccc::device::container_d2h_copy_alg<
+        traccc::track_candidate_container_types>
+        copy_track_candidates;
+    traccc::device::container_d2h_copy_alg<traccc::track_state_container_types>
+        copy_track_states;
 
 public:
     TracccGpuStandalone(int deviceID = 0) :
         m_device_id(deviceID), 
+        mr{device_mr, &cuda_host_mr},
+        copy{stream.cudaStream()},
+        host_detector{host_mr},
         ca_cuda(mr, copy, stream, clusterization_opts), 
-        ms_cuda(copy, stream)
+        ms_cuda(copy, stream),
+        sf_cuda(mr, copy, stream),
+        sa_cuda(seeding_opts.seedfinder, {seeding_opts.seedfinder},
+                seeding_opts.seedfilter, mr, copy, stream),
+        tp_cuda(mr, copy, stream),
+        finding_alg_cuda(finding_cfg, mr, copy, stream),
+        fitting_alg_cuda(fitting_cfg, mr, copy, stream),
+        copy_track_candidates(mr, copy),
+        copy_track_states(mr, copy)
     {
         initialize();
     }
@@ -183,11 +252,30 @@ void TracccGpuStandalone::initialize()
     surface_transforms = std::move(geom_data.first);
     barcode_map = std::move(geom_data.second);
 
+    // setup the detector
+    cfg.add_file(detector_opts.detector_file);
+    cfg.add_file(detector_opts.grid_file);
 
-    // cfg.add_file(detector_opts.detector_file);
+    // initialize the field
+    field_vec = {0.f, 0.f, seeding_opts.seedfinder.bFieldInZ};
+    field = detray::bfield::create_const_field(field_vec);
+
+    // Read the detector configuration file
+    auto det = detray::io::read_detector<host_detector_type>(host_mr, cfg);
+    host_detector = std::move(det.first);
+
+    // Copy it to the device.
+    device_detector = detray::get_buffer(detray::get_data(host_detector),
+                                            device_mr, copy);
+    stream.synchronize();
+    device_detector_view = detray::get_data(device_detector);
 
     // Read the digitization configuration file
     digi_cfg = std::make_unique<traccc::digitization_config>(traccc::io::read_digitization_config(detector_opts.digitization_file));
+
+    // initialize the track finding algorithm
+    finding_cfg.propagation = propagation_config;
+    fitting_cfg.propagation = propagation_config;
 
     return;
 }
@@ -204,33 +292,91 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     const traccc::cell_module_collection_types::host&
         modules_per_event = read_out.modules;
 
-    // Create device copy of input collections
+    // create buffers and copy to device
     traccc::cell_collection_types::buffer cells_buffer(
         cells_per_event.size(), mr.main);
     copy(vecmem::get_data(cells_per_event), cells_buffer);
     traccc::cell_module_collection_types::buffer modules_buffer(
         modules_per_event.size(), mr.main);
     copy(vecmem::get_data(modules_per_event), modules_buffer);
+    stream.synchronize();
 
-    // Reconstruct it into spacepoints on the device.
-    traccc::measurement_collection_types::buffer measurements_cuda_buffer(
-            0, *mr.host);
+    //
+    // ----------------- Clusterization -----------------
+    // 
+    traccc::measurement_collection_types::buffer measurements_cuda_buffer(0, *mr.host);
     measurements_cuda_buffer = ca_cuda(cells_buffer, modules_buffer);
     ms_cuda(measurements_cuda_buffer);
-    stream.synchronize();
+
+    // stream.synchronize();
+    
+    //
+    // ----------------- Spacepoint Formation -----------------
+    //  
+    traccc::spacepoint_collection_types::buffer spacepoints_cuda_buffer(0, *mr.host);
+    spacepoints_cuda_buffer = sf_cuda(measurements_cuda_buffer, modules_buffer);
+
+    //
+    // ----------------- Seeding Algorithm -----------------
+    //
+    traccc::seed_collection_types::buffer seeds_cuda_buffer(0, *mr.host);
+    seeds_cuda_buffer = sa_cuda(spacepoints_cuda_buffer);
+
+    //
+    // ----------------- Finding and Fitting -----------------
+    //
+    // track params estimation
+    traccc::bound_track_parameters_collection_types::buffer params_cuda_buffer(0, *mr.host);
+    params_cuda_buffer = tp_cuda(spacepoints_cuda_buffer, seeds_cuda_buffer, field_vec);
+
+    auto navigation_buffer = detray::create_candidates_buffer(
+                                host_detector,
+                                finding_cfg.navigation_buffer_size_scaler *
+                                    copy.get_size(seeds_cuda_buffer),
+                                mr.main, mr.host);
+
+    // track finding                        
+    traccc::track_candidate_container_types::buffer track_candidates_buffer;
+    track_candidates_buffer = finding_alg_cuda(device_detector_view, field, navigation_buffer,
+                                               measurements_cuda_buffer, params_cuda_buffer);
+
+    // track fitting
+    traccc::track_state_container_types::buffer track_states_buffer;
+    track_states_buffer = fitting_alg_cuda(device_detector_view, field, navigation_buffer,
+                     track_candidates_buffer);
+
+    //
+    // ----------------- Print Statistics -----------------
+    // 
+    // copy buffer to host
+    traccc::measurement_collection_types::host measurements_per_event_cuda;
+    traccc::spacepoint_collection_types::host spacepoints_per_event_cuda;
+    traccc::seed_collection_types::host seeds_cuda;
+    traccc::bound_track_parameters_collection_types::host params_cuda;
 
     copy(measurements_cuda_buffer, measurements_per_event_cuda)->wait();
-
+    copy(spacepoints_cuda_buffer, spacepoints_per_event_cuda)->wait();
+    copy(seeds_cuda_buffer, seeds_cuda)->wait();
+    copy(params_cuda_buffer, params_cuda)->wait();
+    auto track_candidates_cuda =
+        copy_track_candidates(track_candidates_buffer);
+    auto track_states_cuda = copy_track_states(track_states_buffer);
     stream.synchronize();
 
-    // Print out measurements!
-    std::cout << measurements_per_event_cuda.size() << std::endl;
+    // print results
+    std::cout << " " << std::endl;
+    std::cout << "==> Statistics ... " << std::endl;
+    std::cout << " - number of measurements created " << measurements_per_event_cuda.size() << std::endl;
+    std::cout << " - number of spacepoints created " << spacepoints_per_event_cuda.size() << std::endl;
+    std::cout << " - number of seeds created " << seeds_cuda.size() << std::endl;
+    std::cout << " - number of track candidates created " << track_candidates_cuda.size() << std::endl;
+    std::cout << " - number of fitted tracks created " << track_states_cuda.size() << std::endl;
 
-    for (std::size_t i = 0; i < 10; ++i) {
-        auto measurement = measurements_per_event_cuda.at(i);
-        std::cout << "Measurement ID: " << measurement.measurement_id << std::endl;
-        std::cout << "Local coordinates: [" << measurement.local[0] << ", " << measurement.local[1] << "]" << std::endl; 
-    }
+    // for (std::size_t i = 0; i < 10; ++i) {
+    //     auto measurement = measurements_per_event_cuda.at(i);
+    //     std::cout << "Measurement ID: " << measurement.measurement_id << std::endl;
+    //     std::cout << "Local coordinates: [" << measurement.local[0] << ", " << measurement.local[1] << "]" << std::endl; 
+    // }
 
     return;
 }

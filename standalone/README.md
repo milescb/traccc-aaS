@@ -13,7 +13,7 @@ cmake --build .
 Run within the build directory
 
 ```
-./TracccGpuStandalone $DATADIR/tml_pixels/event000000000-cells.csv
+./TracccGpuStandalone $DATADIR/odd/geant4_10muon_10GeV/event000000000-cells.csv
 ```
 
 The output should look something like:
@@ -44,7 +44,7 @@ Local coordinates: [6.375, -1.375]
 or to run the CPU version:
 
 ```
-./TracccCpuStandalone $DATADIR/tml_pixels/event000000000-cells.csv
+./TracccCpuStandalone $DATADIR/odd/geant4_10muon_10GeV/event000000000-cells.csv
 ```
 
 ## Compare to official example

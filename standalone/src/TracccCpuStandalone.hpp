@@ -3,11 +3,25 @@
 #include <chrono>
 #include <iomanip>
 
-// Project include(s).
+// algorithms
 #include "traccc/clusterization/sparse_ccl_algorithm.hpp"
 #include "traccc/clusterization/clusterization_algorithm.hpp"
+#include "traccc/clusterization/spacepoint_formation_algorithm.hpp"
+#include "traccc/finding/finding_algorithm.hpp"
+#include "traccc/fitting/fitting_algorithm.hpp"
+#include "traccc/seeding/seeding_algorithm.hpp"
+#include "traccc/seeding/track_params_estimation.hpp"
+#include "traccc/ambiguity_resolution/greedy_ambiguity_resolution_algorithm.hpp"
 #include "traccc/edm/cell.hpp"
 #include "traccc/options/detector.hpp"
+
+// algorithm options
+//! NOTE: these may not be necessary
+#include "traccc/options/program_options.hpp"
+#include "traccc/options/track_finding.hpp"
+#include "traccc/options/track_propagation.hpp"
+#include "traccc/options/track_resolution.hpp"
+#include "traccc/options/track_seeding.hpp"
 
 // io
 #include "traccc/io/read_cells.hpp"
@@ -16,9 +30,14 @@
 #include "traccc/io/utils.hpp"
 #include "traccc/io/csv/make_cell_reader.hpp"
 
+// detray
 #include "detray/core/detector.hpp"
 #include "detray/detectors/bfield.hpp"
 #include "detray/io/frontend/detector_reader.hpp"
+//! perhaps not necessary? 
+#include "detray/navigation/navigator.hpp"
+#include "detray/propagator/propagator.hpp"
+#include "detray/propagator/rk_stepper.hpp"
 
 // VecMem include(s).
 #include <vecmem/memory/host_memory_resource.hpp>
@@ -102,22 +121,67 @@ void read_cells(traccc::io::cell_reader_output &out,
                 const traccc::digitization_config *dconfig, 
                 const std::map<std::uint64_t, 
                 detray::geometry::barcode> *barcode_map, 
-                bool deduplicate);
+                bool deduplicate); 
+
+// Type definitions
+using detector_type = detray::detector<detray::default_metadata,
+                                           detray::host_container_types>;
+using stepper_type =
+    detray::rk_stepper<detray::bfield::const_field_t::view_t,
+                        detector_type::algebra_type,
+                        detray::constrained_step<>>;
+using navigator_type = detray::navigator<const detector_type>;
+using finding_algorithm =
+    traccc::finding_algorithm<stepper_type, navigator_type>;
+using fitting_algorithm = traccc::fitting_algorithm<
+    traccc::kalman_fitter<stepper_type, navigator_type>>;     
 
 class TracccClusterStandalone
 {
 private:
     int m_deviceID;
     vecmem::host_memory_resource m_mem;
+    // options
     traccc::opts::detector m_detector_opts;
+    traccc::opts::track_seeding m_seeding_opts;
+    traccc::opts::track_finding m_finding_opts;
+    traccc::opts::track_propagation m_propagation_opts;
+    detray::propagation::config m_propagation_config;
+    detray::io::detector_reader_config cfg;
+    detector_type detector;
+    finding_algorithm::config_type m_finding_cfg;
+    fitting_algorithm::config_type m_fitting_cfg;
+    // algorithms
     traccc::host::clusterization_algorithm m_ca;
+    traccc::host::spacepoint_formation_algorithm m_sf;
+    traccc::seeding_algorithm m_sa;
+    traccc::track_params_estimation m_tp;
+    traccc::finding_algorithm<stepper_type, navigator_type> m_finding_alg;
+    traccc::fitting_algorithm<traccc::kalman_fitter<stepper_type, navigator_type>> m_fitting_alg;
+    traccc::greedy_ambiguity_resolution_algorithm m_resolution_alg;
+    // geometry
     traccc::geometry m_surface_transforms;
     std::unique_ptr<traccc::digitization_config> m_digi_cfg;
     std::unique_ptr<std::map<std::uint64_t, detray::geometry::barcode>> m_barcode_map;
+    // field
+    traccc::vector3 field_vec;
+    detray::bfield::const_field_t field;
 
 public:
     TracccClusterStandalone(int deviceID = 0)
-        : m_deviceID(deviceID), m_ca(m_mem)
+        : m_deviceID(deviceID), 
+          detector(m_mem),
+          m_ca(m_mem), 
+          m_sf(m_mem), 
+          m_sa(m_seeding_opts.seedfinder,
+               {m_seeding_opts.seedfinder},
+                m_seeding_opts.seedfilter, m_mem),
+          m_tp(m_mem),
+          m_propagation_config(m_propagation_opts),
+          m_finding_cfg(m_finding_opts),
+          m_finding_alg(m_finding_cfg),
+          m_fitting_alg(m_fitting_cfg)
+
     {
         initializePipeline();
     }
@@ -143,6 +207,20 @@ void TracccClusterStandalone::initializePipeline()
     m_barcode_map = std::move(geom_data.second);
 
     m_digi_cfg = std::make_unique<traccc::digitization_config>(traccc::io::read_digitization_config(m_detector_opts.digitization_file));
+
+    // setup the detector
+    cfg.add_file(m_detector_opts.detector_file);
+    cfg.add_file(m_detector_opts.grid_file);
+    auto det = detray::io::read_detector<detector_type>(m_mem, cfg);
+    detector = std::move(det.first);
+
+    // initialize the field
+    field_vec = {0.f, 0.f, m_seeding_opts.seedfinder.bFieldInZ};
+    field = detray::bfield::create_const_field(field_vec);
+
+    // initialize the track finding algorithm
+    m_finding_cfg.propagation = m_propagation_config;
+    m_fitting_cfg.propagation = m_propagation_config;
 }
 
 void TracccClusterStandalone::runPipeline(std::vector<traccc::io::csv::cell> cells)
@@ -155,17 +233,79 @@ void TracccClusterStandalone::runPipeline(std::vector<traccc::io::csv::cell> cel
     traccc::cell_collection_types::host &cells_per_event = readOut.cells;
     traccc::cell_module_collection_types::host &modules_per_event = readOut.modules;
 
+    //
+    // ----------------- Clusterization -----------------
+    // 
     traccc::host::clusterization_algorithm::output_type measurements_per_event{&m_mem};
-    measurements_per_event = m_ca(vecmem::get_data(cells_per_event), vecmem::get_data(modules_per_event));
-    auto measurements_size = measurements_per_event.size();
-    std::cout << "Number of measurements: " << measurements_size << std::endl;
+    measurements_per_event = m_ca(vecmem::get_data(cells_per_event), 
+                                  vecmem::get_data(modules_per_event));
 
-    for (std::size_t i = 0; i < 10; ++i)
-    {
-        auto measurement = measurements_per_event.at(i);
-        std::cout << "Measurement ID: " << measurement.measurement_id << std::endl;
-        std::cout << "Local coordinates: [" << measurement.local[0] << ", " << measurement.local[1] << "]" << std::endl;
-    }
+    //
+    // ----------------- Spacepoint Formation -----------------
+    //
+    traccc::host::spacepoint_formation_algorithm::output_type spacepoints_per_event{&m_mem};
+    spacepoints_per_event = m_sf(vecmem::get_data(measurements_per_event), 
+                                 vecmem::get_data(modules_per_event));
+
+    //
+    // ----------------- Seeding -----------------
+    //
+    traccc::seeding_algorithm::output_type seeds{&m_mem};
+    seeds = m_sa(spacepoints_per_event);
+
+    //
+    // ----------------- Finding and Fitting -----------------
+    //
+
+    // track paramater estimation
+    traccc::track_params_estimation::output_type params{&m_mem};
+    params = m_tp(spacepoints_per_event, seeds, field_vec);
+
+    // track finding
+    finding_algorithm::output_type track_candidates{&m_mem};
+    track_candidates = m_finding_alg(detector, field, measurements_per_event, params);
+
+    // track fitting
+    fitting_algorithm::output_type track_states{&m_mem};
+    track_states = m_fitting_alg(detector, field, track_candidates);
+
+    // resolved tracks
+    traccc::greedy_ambiguity_resolution_algorithm::output_type resolved_track_states{&m_mem};
+    resolved_track_states = m_resolution_alg(track_states);
+
+    // ----------------- Print Statistics -----------------
+    std::cout << " " << std::endl;
+    std::cout << "==> Statistics ... " << std::endl;
+
+    // measurement and spacepoints
+    auto measurements_size = measurements_per_event.size();
+    std::cout << " - number of measurements created: " << measurements_size << std::endl;
+    auto spacepoints_size = spacepoints_per_event.size();
+    std::cout << " - number of spacepoints created: " << spacepoints_size << std::endl;
+
+    // for (std::size_t i = 0; i < 10; ++i)
+    // {
+    //     auto measurement = measurements_per_event.at(i);
+    //     auto spacepoint = spacepoints_per_event.at(i);
+    //     std::cout << "Measurement ID: " << measurement.measurement_id << std::endl;
+    //     std::cout << "Local coordinates: [" << measurement.local[0] << ", " << measurement.local[1] << "]" << std::endl;
+    //     std::cout << "Global coordinates: [" << spacepoint.global[0] << ", " << spacepoint.global[1] << ", " << spacepoint.global[2] << "]" << std::endl;
+    // }
+
+    // seeding
+    auto seeds_size = seeds.size();
+    std::cout << " - number of seeds created: " << seeds_size << std::endl;
+
+    // fitting and finding
+    auto track_candidates_size = track_candidates.size();
+    std::cout << " - number of track candidates: " << track_candidates_size << std::endl;
+
+    auto track_states_size = track_states.size();
+    std::cout << " - number of fitted tracks: " << track_states_size << std::endl;
+
+    auto resolved_track_states_size = resolved_track_states.size();
+    std::cout << " - number of resolved tracks: " << resolved_track_states_size << std::endl;
+
 }
 
 std::vector<traccc::io::csv::cell> read_csv(const std::string &filename)
@@ -281,7 +421,12 @@ std::map<std::uint64_t, std::vector<traccc::cell>> read_all_cells(const std::vec
     return result;
 }
 
-void read_cells(traccc::io::cell_reader_output &out, const std::vector<traccc::io::csv::cell> &cells, const traccc::geometry *geom, const traccc::digitization_config *dconfig, const std::map<std::uint64_t, detray::geometry::barcode> *barcode_map, bool deduplicate)
+void read_cells(traccc::io::cell_reader_output &out, 
+                const std::vector<traccc::io::csv::cell> &cells, 
+                const traccc::geometry *geom, 
+                const traccc::digitization_config *dconfig, 
+                const std::map<std::uint64_t, detray::geometry::barcode> *barcode_map, 
+                bool deduplicate)
 {
     auto cellsMap = (deduplicate ? read_deduplicated_cells(cells)
                                  : read_all_cells(cells));
