@@ -143,12 +143,12 @@ private:
     vecmem::host_memory_resource m_mem;
     // options
     traccc::opts::detector m_detector_opts;
+    detector_type detector;
     traccc::opts::track_seeding m_seeding_opts;
     traccc::opts::track_finding m_finding_opts;
     traccc::opts::track_propagation m_propagation_opts;
     detray::propagation::config m_propagation_config;
     detray::io::detector_reader_config cfg;
-    detector_type detector;
     finding_algorithm::config_type m_finding_cfg;
     fitting_algorithm::config_type m_fitting_cfg;
     // algorithms
@@ -171,14 +171,14 @@ public:
     TracccClusterStandalone(int deviceID = 0)
         : m_deviceID(deviceID), 
           detector(m_mem),
+          m_propagation_config(m_propagation_opts),
+          m_finding_cfg(m_finding_opts),
           m_ca(m_mem), 
           m_sf(m_mem), 
           m_sa(m_seeding_opts.seedfinder,
                {m_seeding_opts.seedfinder},
                 m_seeding_opts.seedfilter, m_mem),
           m_tp(m_mem),
-          m_propagation_config(m_propagation_opts),
-          m_finding_cfg(m_finding_opts),
           m_finding_alg(m_finding_cfg),
           m_fitting_alg(m_fitting_cfg)
 
