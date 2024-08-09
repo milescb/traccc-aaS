@@ -328,43 +328,16 @@ std::vector<traccc::io::csv::cell> TracccClusterStandalone::read_csv(const std::
     auto reader = traccc::io::csv::make_cell_reader(filename);
     traccc::io::csv::cell iocell;
 
+    std::cout << "Reading cells from " << filename << std::endl;
+
     while (reader.read(iocell))
     {
         cells.push_back(iocell);
     }
 
+    std::cout << "Read " << cells.size() << " cells." << std::endl;
+
     return cells;
-}
-
-std::vector<std::vector<double>> TracccClusterStandalone::read_from_csv(const std::string &filename)
-{
-    std::vector<std::vector<double>> data;
-    std::ifstream file(filename);
-    
-    if (!file.is_open()) {
-        std::cerr << "Could not open the file!" << std::endl;
-        return data;
-    }
-
-    std::string line;
-    std::getline(file, line);
-
-    while (std::getline(file, line)) {
-        std::vector<double> row;
-        std::stringstream ss(line);
-        std::string value;
-        
-        // Read each value separated by a comma
-        while (std::getline(ss, value, ',')) {
-            row.push_back(std::stod(value));
-        }
-        
-        data.push_back(row);
-    }
-
-    file.close();
-    std::cout << "Read " << data.size() << " rows from " << filename << std::endl;
-    return data;
 }
 
 std::vector<traccc::io::csv::cell> TracccClusterStandalone::read_from_array(const std::vector<std::vector<double>> &data)
