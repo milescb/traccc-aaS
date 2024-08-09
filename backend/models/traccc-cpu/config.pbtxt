@@ -1,15 +1,10 @@
 backend: "Traccc"
 max_batch_size: 0
 input [
-   {
-    name: "GEOMETRY_ID"
-    data_type: TYPE_UINT64
-    dims: [ -1 ]
-  },
   {
     name: "FEATURES"
     data_type: TYPE_FP64
-    dims: [ -1, 5 ]
+    dims: [ -1, 6 ]
   }
 ]
 output [

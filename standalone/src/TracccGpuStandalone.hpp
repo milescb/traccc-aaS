@@ -79,50 +79,48 @@ struct cell_order
     }
 };
 
-// Definition of the get_module function
+/// Helper function which finds module from csv::cell in the geometry and
+/// digitization config, and initializes the modules limits with the cell's
+/// properties
 traccc::cell_module get_module(const std::uint64_t geometry_id,
-                               const traccc::geometry *geom,
-                               const traccc::digitization_config *dconfig,
-                               const std::uint64_t original_geometry_id)
-{
+                               const traccc::geometry* geom,
+                               const traccc::digitization_config* dconfig,
+                               const std::uint64_t original_geometry_id) {
+
     traccc::cell_module result;
     result.surface_link = detray::geometry::barcode{geometry_id};
 
     // Find/set the 3D position of the detector module.
-    if (geom != nullptr)
-    {
-        if (!geom->contains(result.surface_link.value()))
-        {
+    if (geom != nullptr) {
+
+        // Check if the module ID is known.
+        if (!geom->contains(result.surface_link.value())) {
             throw std::runtime_error(
                 "Could not find placement for geometry ID " +
                 std::to_string(result.surface_link.value()));
         }
+
+        // Set the value on the module description.
         result.placement = (*geom)[result.surface_link.value()];
     }
 
     // Find/set the digitization configuration of the detector module.
-    if (dconfig != nullptr)
-    {
+    if (dconfig != nullptr) {
+
+        // Check if the module ID is known.
         const traccc::digitization_config::Iterator geo_it =
             dconfig->find(original_geometry_id);
-        if (geo_it == dconfig->end())
-        {
+        if (geo_it == dconfig->end()) {
             throw std::runtime_error(
                 "Could not find digitization config for geometry ID " +
                 std::to_string(original_geometry_id));
         }
 
-        const auto &binning_data = geo_it->segmentation.binningData();
-        assert(binning_data.size() > 0);
-        result.pixel.min_corner_x = binning_data[0].min;
-        result.pixel.pitch_x = binning_data[0].step;
-        if (binning_data.size() > 1)
-        {
-            result.pixel.min_corner_y = binning_data[1].min;
-            result.pixel.pitch_y = binning_data[1].step;
-        }
-        result.pixel.dimension = geo_it->dimensions;
-        result.pixel.variance_y = geo_it->variance_y;
+        // Set the value on the module description.
+        const auto& binning_data = geo_it->segmentation.binningData();
+        assert(binning_data.size() >= 2);
+        result.pixel = {binning_data[0].min, binning_data[1].min,
+                        binning_data[0].step, binning_data[1].step};
     }
 
     return result;
@@ -181,7 +179,7 @@ private:
     traccc::opts::track_seeding seeding_opts;
     traccc::opts::track_finding finding_opts;
     traccc::opts::track_propagation propagation_opts;
-    detray::propagation::config propagation_config;
+    // detray::propagation::config propagation_config;
     // detector options
     traccc::geometry surface_transforms;
     std::unique_ptr<traccc::digitization_config> digi_cfg;
@@ -216,7 +214,7 @@ public:
         mr{device_mr, &cuda_host_mr},
         copy{stream.cudaStream()},
         host_detector{host_mr},
-        ca_cuda(mr, copy, stream, clusterization_opts), 
+        ca_cuda(mr, copy, stream, clusterization_opts.target_cells_per_partition), 
         ms_cuda(copy, stream),
         sf_cuda(mr, copy, stream),
         sa_cuda(seeding_opts.seedfinder, {seeding_opts.seedfinder},
@@ -235,8 +233,9 @@ public:
 
     void initialize();
     void run(std::vector<traccc::io::csv::cell> cells);
-    std::vector<traccc::io::csv::cell> read_from_array(const std::vector<std::uint64_t> &geometry_ids,
-                                                        const std::vector<std::vector<double>> &data);
+    std::vector<traccc::io::csv::cell> read_csv(const std::string &filename);
+    std::vector<std::vector<double>> read_from_csv(const std::string &filename);
+    std::vector<traccc::io::csv::cell> read_from_array(const std::vector<std::vector<double>> &data);
 };
 
 void TracccGpuStandalone::initialize()
@@ -274,8 +273,24 @@ void TracccGpuStandalone::initialize()
     digi_cfg = std::make_unique<traccc::digitization_config>(traccc::io::read_digitization_config(detector_opts.digitization_file));
 
     // initialize the track finding algorithm
-    finding_cfg.propagation = propagation_config;
-    fitting_cfg.propagation = propagation_config;
+    // finding_cfg.propagation = propagation_config;
+    // fitting_cfg.propagation = propagation_config;
+    finding_cfg.min_track_candidates_per_track =
+        finding_opts.track_candidates_range[0];
+    finding_cfg.max_track_candidates_per_track =
+        finding_opts.track_candidates_range[1];
+    finding_cfg.min_step_length_for_next_surface =
+        finding_opts.min_step_length_for_next_surface;
+    finding_cfg.max_step_counts_for_next_surface =
+        finding_opts.max_step_counts_for_next_surface;
+    finding_cfg.chi2_max = finding_opts.chi2_max;
+    finding_cfg.max_num_branches_per_seed = finding_opts.nmax_per_seed;
+    finding_cfg.max_num_skipping_per_cand =
+        finding_opts.max_num_skipping_per_cand;
+    propagation_opts.setup(finding_cfg.propagation);
+
+    host_fitting_algorithm::config_type fitting_cfg;
+    propagation_opts.setup(fitting_cfg.propagation);
 
     return;
 }
@@ -383,7 +398,7 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
 
 // deal with input data
 
-std::vector<traccc::io::csv::cell> read_csv(const std::string &filename)
+std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_csv(const std::string &filename)
 {
     std::vector<traccc::io::csv::cell> cells;
     auto reader = traccc::io::csv::make_cell_reader(filename);
@@ -497,39 +512,53 @@ void read_cells(traccc::io::cell_reader_output &out,
     }
 }
 
-std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const std::vector<std::uint64_t> &geometry_ids,
-                                                                            const std::vector<std::vector<double>> &data)
+std::vector<std::vector<double>> TracccGpuStandalone::read_from_csv(const std::string &filename)
+{
+    std::vector<std::vector<double>> data;
+    std::ifstream file(filename);
+    
+    if (!file.is_open()) {
+        std::cerr << "Could not open the file!" << std::endl;
+        return data;
+    }
+
+    std::string line;
+    std::getline(file, line);
+
+    while (std::getline(file, line)) {
+        std::vector<double> row;
+        std::stringstream ss(line);
+        std::string value;
+        
+        // Read each value separated by a comma
+        while (std::getline(ss, value, ',')) {
+            row.push_back(std::stod(value));
+        }
+        
+        data.push_back(row);
+    }
+
+    file.close();
+    std::cout << "Read " << data.size() << " rows from " << filename << std::endl;
+    return data;
+}
+
+std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const std::vector<std::vector<double>> &data)
 {
     std::vector<traccc::io::csv::cell> cells;
 
-    if (geometry_ids.size() != data.size())
+    for (const auto &row : data)
     {
-        throw std::runtime_error("Number of geometry IDs and data rows do not match.");
-    }
-
-    for (size_t i = 0; i < data.size(); ++i) 
-    {
-        const auto& row = data[i];
-        if (row.size() != 5)
-            continue; 
-
+        if (row.size() != 6)
+            continue; // ensure each row contains exactly 6 elements
         traccc::io::csv::cell iocell;
-
-        if (i < geometry_ids.size()) 
-        {
-            iocell.geometry_id = geometry_ids[i];
-        } 
-        else 
-        {
-            continue;
-        }
-
-        iocell.hit_id = static_cast<int>(row[0]);
-        iocell.channel0 = static_cast<int>(row[1]);
-        iocell.channel1 = static_cast<int>(row[2]);
-        iocell.timestamp = static_cast<int>(row[3]);
-        iocell.value = row[4];
-
+        // FIXME needs to decode to the correct type
+        iocell.geometry_id = static_cast<std::uint64_t>(row[0]);
+        iocell.hit_id = static_cast<int>(row[1]);
+        iocell.channel0 = static_cast<int>(row[2]);
+        iocell.channel1 = static_cast<int>(row[3]);
+        iocell.timestamp = static_cast<int>(row[4]);
+        iocell.value = row[5];
         cells.push_back(iocell);
     }
 
