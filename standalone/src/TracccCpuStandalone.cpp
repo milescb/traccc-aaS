@@ -1,5 +1,5 @@
 #include "TracccCpuStandalone.hpp"
-#include <filesystem>
+#include <chrono>
 
 int main(int argc, char *argv[])
 {
@@ -13,25 +13,32 @@ int main(int argc, char *argv[])
     std::string path = std::string(argv[1]);
     std::cout << "Running " << argv[0] << " on " << path << std::endl;
 
-    TracccClusterStandalone clusterStandalone;
+    TracccClusterStandalone standalone;
+    auto cells = standalone.read_csv(path);
 
-    if (std::filesystem::is_directory(path))
+    std::vector<double> timeProcessOneEvent;
+
+     // warm up
+    for (int i = 0; i < 10; i++)
     {
-        for (const auto &entry : std::filesystem::directory_iterator(path))
-        {
-            if (entry.path().extension() == ".csv" && entry.path().filename().string().find("cells.csv") != std::string::npos)
-            {
-                std::cout << "Processing file: " << entry.path() << std::endl;
-                auto cells = clusterStandalone.read_csv(entry.path().string());
-                clusterStandalone.runPipeline(cells);
-            }
-        }
+        standalone.runPipeline(cells);
     }
-    else
+
+    for (int i = 0; i < 100; i++)
     {
-        std::cout << "The provided path is neither a file nor a directory" << std::endl;
-        return -1;
+        auto start = std::chrono::high_resolution_clock::now();
+        standalone.runPipeline(cells);
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> duration = end - start;
+        timeProcessOneEvent.push_back(duration.count());
     }
+
+    std::cout << " " << std::endl;
+    std::cout << "Estimated performance of standalone: " << std::endl;
+    std::cout << "Average time to process one event: " << std::accumulate(timeProcessOneEvent.begin(), 
+        timeProcessOneEvent.end(), 0.0) / timeProcessOneEvent.size() << " s" << std::endl;
+    std::cout << "Throughput: " << timeProcessOneEvent.size() / std::accumulate(timeProcessOneEvent.begin(), 
+        timeProcessOneEvent.end(), 0.0) << " events/s" << std::endl;
 
     return 0;
 }
