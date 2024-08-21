@@ -455,7 +455,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
 
     // MARK: HACK to load data in server initialization
     // load the data
-    std::string input_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data_odd_ttbar_large/geant4_ttbar_mu20/event000000000-cells.csv";
+    std::string input_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data_odd_ttbar_large/geant4_ttbar_mu200/event000000000-cells.csv";
     instance_state->cells_ = instance_state->traccc_cpu_standalone_->read_csv(input_file);
 
     return nullptr;  // success
