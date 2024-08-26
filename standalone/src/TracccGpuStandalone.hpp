@@ -59,6 +59,9 @@
 #include <vecmem/memory/host_memory_resource.hpp>
 #include <vecmem/utils/cuda/async_copy.hpp>
 
+// CUDA include(s).
+#include <cuda_runtime.h>
+
 // Definition of the cell_order struct
 struct cell_order
 {
@@ -211,20 +214,31 @@ private:
 public:
     TracccGpuStandalone(int deviceID = 0) :
         m_device_id(deviceID), 
+        host_mr(),
+        cuda_host_mr(),
+        device_mr(),
         mr{device_mr, &cuda_host_mr},
-        copy{stream.cudaStream()},
-        host_detector{host_mr},
-        ca_cuda(mr, copy, stream, clusterization_opts.target_cells_per_partition), 
+        stream(),
+        copy(stream.cudaStream()),
+        host_detector(host_mr),
+        ca_cuda(mr, copy, stream, clusterization_opts.target_cells_per_partition),
         ms_cuda(copy, stream),
         sf_cuda(mr, copy, stream),
-        sa_cuda(seeding_opts.seedfinder, {seeding_opts.seedfinder},
-                seeding_opts.seedfilter, mr, copy, stream),
+        sa_cuda(seeding_opts.seedfinder, {seeding_opts.seedfinder}, seeding_opts.seedfilter, mr, copy, stream),
         tp_cuda(mr, copy, stream),
         finding_alg_cuda(finding_cfg, mr, copy, stream),
         fitting_alg_cuda(fitting_cfg, mr, copy, stream),
         copy_track_candidates(mr, copy),
         copy_track_states(mr, copy)
     {
+        //! Set the CUDA device totally doesn't work
+        // cudaError_t err = cudaSetDevice(m_device_id);
+        // if (err != cudaSuccess)
+        // {
+        //     throw std::runtime_error("Failed to set CUDA device: " \
+        //                                 + std::string(cudaGetErrorString(err)));
+        // }
+
         initialize();
     }
 
@@ -323,7 +337,7 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     measurements_cuda_buffer = ca_cuda(cells_buffer, modules_buffer);
     ms_cuda(measurements_cuda_buffer);
 
-    // stream.synchronize();
+    stream.synchronize();
     
     //
     // ----------------- Spacepoint Formation -----------------
@@ -363,29 +377,30 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     //
     // ----------------- Print Statistics -----------------
     // 
+    std::cout << " done! " << std::endl;
     // copy buffer to host
-    traccc::measurement_collection_types::host measurements_per_event_cuda;
-    traccc::spacepoint_collection_types::host spacepoints_per_event_cuda;
-    traccc::seed_collection_types::host seeds_cuda;
-    traccc::bound_track_parameters_collection_types::host params_cuda;
+    // traccc::measurement_collection_types::host measurements_per_event_cuda;
+    // traccc::spacepoint_collection_types::host spacepoints_per_event_cuda;
+    // traccc::seed_collection_types::host seeds_cuda;
+    // traccc::bound_track_parameters_collection_types::host params_cuda;
 
-    copy(measurements_cuda_buffer, measurements_per_event_cuda)->wait();
-    copy(spacepoints_cuda_buffer, spacepoints_per_event_cuda)->wait();
-    copy(seeds_cuda_buffer, seeds_cuda)->wait();
-    copy(params_cuda_buffer, params_cuda)->wait();
-    auto track_candidates_cuda =
-        copy_track_candidates(track_candidates_buffer);
-    auto track_states_cuda = copy_track_states(track_states_buffer);
-    stream.synchronize();
+    // copy(measurements_cuda_buffer, measurements_per_event_cuda)->wait();
+    // copy(spacepoints_cuda_buffer, spacepoints_per_event_cuda)->wait();
+    // copy(seeds_cuda_buffer, seeds_cuda)->wait();
+    // copy(params_cuda_buffer, params_cuda)->wait();
+    // auto track_candidates_cuda =
+    //     copy_track_candidates(track_candidates_buffer);
+    // auto track_states_cuda = copy_track_states(track_states_buffer);
+    // stream.synchronize();
 
-    // print results
-    std::cout << " " << std::endl;
-    std::cout << "==> Statistics ... " << std::endl;
-    std::cout << " - number of measurements created " << measurements_per_event_cuda.size() << std::endl;
-    std::cout << " - number of spacepoints created " << spacepoints_per_event_cuda.size() << std::endl;
-    std::cout << " - number of seeds created " << seeds_cuda.size() << std::endl;
-    std::cout << " - number of track candidates created " << track_candidates_cuda.size() << std::endl;
-    std::cout << " - number of fitted tracks created " << track_states_cuda.size() << std::endl;
+    // // print results
+    // std::cout << " " << std::endl;
+    // std::cout << "==> Statistics ... " << std::endl;
+    // std::cout << " - number of measurements created " << measurements_per_event_cuda.size() << std::endl;
+    // std::cout << " - number of spacepoints created " << spacepoints_per_event_cuda.size() << std::endl;
+    // std::cout << " - number of seeds created " << seeds_cuda.size() << std::endl;
+    // std::cout << " - number of track candidates created " << track_candidates_cuda.size() << std::endl;
+    // std::cout << " - number of fitted tracks created " << track_states_cuda.size() << std::endl;
 
     // for (std::size_t i = 0; i < 10; ++i) {
     //     auto measurement = measurements_per_event_cuda.at(i);

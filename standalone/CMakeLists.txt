@@ -47,7 +47,7 @@ add_definitions(-DALGEBRA_PLUGINS_INCLUDE_ARRAY)
 
 target_link_libraries(TracccGpuStandalone PUBLIC 
     vecmem::core vecmem::cuda traccc::io traccc::performance
-    traccc::core traccc::device_common traccc::cuda
+    traccc::core traccc::device_common traccc::cuda CUDA::cudart
     traccc::options detray::utils detray::io detray::core)
 
 target_link_libraries(TracccCpuStandalone PUBLIC 
