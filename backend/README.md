@@ -25,7 +25,7 @@ cmake --build . --target install -- -j20
 ## Run model
 
 ```
-export INSTALLDIR=/pscratch/sd/m/milescb/traccc-aaS/dev/install
+export INSTALLDIR=<install_dir>
 export PATH=$INSTALLDIR/bin:$PATH
 export LD_LIBRARY_PATH=$INSTALLDIR/lib:$LD_LIBRARY_PATH
 

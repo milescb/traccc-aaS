@@ -21,7 +21,9 @@ def main():
     print("\n=========")
     async_requests = []
 
-    input0_data = pd.read_csv(FLAGS.filename).to_numpy(dtype=np.float64)
+    # input0_data = pd.read_csv(FLAGS.filename).to_numpy(dtype=np.float64)
+    # make some dummy data
+    input0_data = np.zeros((6, 6), dtype=np.float64)
     print("Sending request to batching model: input = {}".format(input0_data))
     inputs = [httpclient.InferInput("FEATURES", input0_data.shape, "FP64")]
     inputs[0].set_data_from_numpy(input0_data)

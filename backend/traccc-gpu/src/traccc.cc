@@ -393,6 +393,8 @@ class ModelInstanceState : public BackendModelInstance {
 
   // define standalone object
   std::unique_ptr<TracccGpuStandalone> traccc_gpu_standalone_;
+  // define cells
+  std::vector<traccc::io::csv::cell> cells_;
 
  private:
   ModelInstanceState(
@@ -433,24 +435,39 @@ extern "C" {
 TRITONSERVER_Error*
 TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
 {
-  // Get the model state associated with this instance's model.
-  TRITONBACKEND_Model* model;
-  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceModel(instance, &model));
+    // Get the model state associated with this instance's model.
+    TRITONBACKEND_Model* model;
+    RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceModel(instance, &model));
 
-  void* vmodelstate;
-  RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vmodelstate));
-  ModelState* model_state = reinterpret_cast<ModelState*>(vmodelstate);
+    void* vmodelstate;
+    RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vmodelstate));
+    ModelState* model_state = reinterpret_cast<ModelState*>(vmodelstate);
 
-  // Create a ModelInstanceState object and associate it with the
-  // TRITONBACKEND_ModelInstance.
-  ModelInstanceState* instance_state;
-  RETURN_IF_ERROR(
-      ModelInstanceState::Create(model_state, instance, &instance_state));
-  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceSetState(
-      instance, reinterpret_cast<void*>(instance_state)));
-  
-  instance_state->traccc_gpu_standalone_ = std::make_unique<TracccGpuStandalone>(instance_state->DeviceId());
-  return nullptr;  // success
+    // Create a ModelInstanceState object and associate it with the
+    // TRITONBACKEND_ModelInstance.
+    ModelInstanceState* instance_state;
+    RETURN_IF_ERROR(
+        ModelInstanceState::Create(model_state, instance, &instance_state));
+    RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceSetState(
+        instance, reinterpret_cast<void*>(instance_state)));
+
+    // Set the CUDA device for this thread
+    cudaError_t err = cudaSetDevice(instance_state->DeviceId());
+    if (err != cudaSuccess)
+    {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            ("Failed to set CUDA device: " + std::string(cudaGetErrorString(err))).c_str());
+    }
+
+    instance_state->traccc_gpu_standalone_ = std::make_unique<TracccGpuStandalone>(instance_state->DeviceId());
+
+    // MARK: HACK to load data in server initialization
+    // load the data
+    std::string input_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data_odd_ttbar_large/geant4_ttbar_mu200/event000000000-cells.csv";
+    instance_state->cells_ = instance_state->traccc_gpu_standalone_->read_csv(input_file);
+
+    return nullptr;  // success
 }
 
 // Triton calls TRITONBACKEND_ModelInstanceFinalize when a model
@@ -503,6 +520,17 @@ TRITONBACKEND_ModelInstanceExecute(
     RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(
         instance, reinterpret_cast<void**>(&instance_state)));
     ModelState* model_state = instance_state->StateForModel();
+
+    // Set the CUDA device for this thread
+    // Seems that this is necessary to set the device for each request
+    // Without leads to out-of-bounds memory access error
+    cudaError_t err = cudaSetDevice(instance_state->DeviceId());
+    if (err != cudaSuccess)
+    {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            ("Failed to set CUDA device: " + std::string(cudaGetErrorString(err))).c_str());
+    }
 
     // 'responses' is initialized as a parallel array to 'requests',
     // with one TRITONBACKEND_Response object for each
@@ -614,41 +642,40 @@ TRITONBACKEND_ModelInstanceExecute(
     TRITONSERVER_MemoryType output_buffer_memory_type = input_buffer_memory_type;
     int64_t output_buffer_memory_type_id = input_buffer_memory_type_id;
 
-    // Determine the number of floats in the input buffer
-    size_t num_floats = input_buffer_byte_size / sizeof(double);
+    // // Determine the number of floats in the input buffer
+    // size_t num_floats = input_buffer_byte_size / sizeof(double);
 
-    // Convert the input buffer to a float pointer
-    const double *double_ptr = reinterpret_cast<const double *>(input_buffer);
+    // // Convert the input buffer to a float pointer
+    // const double *double_ptr = reinterpret_cast<const double *>(input_buffer);
 
-    // Assuming each row in the input 2D array has 6 elements as per the config
-    size_t num_features = 6;
-    size_t num_rows = num_floats / num_features;
+    // // Assuming each row in the input 2D array has 6 elements as per the config
+    // size_t num_features = 6;
+    // size_t num_rows = num_floats / num_features;
 
-    // Convert the input buffer to a 2D vector
-    std::vector<std::vector<double>> input_data;
-    input_data.reserve(num_rows);
+    // // Convert the input buffer to a 2D vector
+    // std::vector<std::vector<double>> input_data;
+    // input_data.reserve(num_rows);
 
-    // FIXME type 
-    for (size_t i = 0; i < num_rows; ++i) {
-        std::vector<double> row;
-        row.reserve(num_features);
-        for (size_t j = 0; j < num_features; ++j) {
-            row.push_back(static_cast<double>(double_ptr[i * num_features + j]));
-        }
-        input_data.push_back(row);
-    }
+    // for (size_t i = 0; i < num_rows; ++i) {
+    //     std::vector<double> row;
+    //     row.reserve(num_features);
+    //     for (size_t j = 0; j < num_features; ++j) {
+    //         row.push_back(static_cast<double>(double_ptr[i * num_features + j]));
+    //     }
+    //     input_data.push_back(row);
+    // }
 
-    int numCells = input_data.size();
-    std::cout << "Number of cells received: " << numCells  << std::endl;
-    for (int i = 0; i < 5; ++i) {
-        std::cout << "Cell " << i << ": ";
-        for (size_t j = 0; j < num_features; ++j) {
-            std::cout << input_data[i][j] << " ";
-        }
-        std::cout << std::endl;
-    }
+    // int numCells = input_data.size();
+    // std::cout << "Number of cells received: " << numCells  << std::endl;
+    // for (int i = 0; i < 5; ++i) {
+    //     std::cout << "Cell " << i << ": ";
+    //     for (size_t j = 0; j < num_features; ++j) {
+    //         std::cout << input_data[i][j] << " ";
+    //     }
+    //     std::cout << std::endl;
+    // }
     // MARK: Run the pipeline
-    std::vector<traccc::io::csv::cell> cells = instance_state->traccc_gpu_standalone_->read_from_array(input_data);
+    const std::vector<traccc::io::csv::cell>& cells = instance_state->cells_;
     instance_state->traccc_gpu_standalone_->run(cells);
 
     std::vector<int64_t> output_data(
