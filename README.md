@@ -10,9 +10,23 @@ A minimal description of how to build a working version is detailed below. In ea
 
 ## Previous work
 
-A large portion of this work is based on the CPU version included here developed by Haoran Zhao. The original repo can be found [here](https://github.com/hrzhao76/traccc-aaS). This CPU version has been incorporated into the workflow here such that both a CPU and GPU version are available. 
+The beginnings of this work is based on the CPU version included here developed by Haoran Zhao. The original repo can be found [here](https://github.com/hrzhao76/traccc-aaS). This CPU version has been incorporated into the workflow here such that both a CPU and GPU version are available. 
 
 ## Running out of the box
+
+### Get the code
+
+Simply clone the repository with 
+
+```
+git clone --recurse-submodules git@github.com:milescb/traccc-aaS.git
+```
+
+_Note: an old release of `traccc` is used to match performance plots. In order to get the proper version for running do_
+
+```
+cd traccc && git checkout v0.10.0
+```
 
 ### Docker
 
@@ -30,7 +44,7 @@ To run out of the box, an installation of `traccc` and the the backend can be fo
 
 ```
 export DATADIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/data
-export INSTALLDIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/prod/ver_07032024/install
+export INSTALLDIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/software/dev/install
 export PATH=$INSTALLDIR/bin:$PATH
 export LD_LIBRARY_PATH=$INSTALLDIR/lib:$LD_LIBRARY_PATH
 ```
