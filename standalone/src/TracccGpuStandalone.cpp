@@ -6,8 +6,8 @@ int main(int argc, char *argv[])
 {
     if (argc < 3)
     {
-        std::cout << "Not enough arguments, minimum requirement: " << std::endl;
-        std::cout << argv[0] << " <event_file>" << std::endl;
+        std::cout << "Not enough arguments, minimum requirement two of the form: " << std::endl;
+        std::cout << argv[0] << " <event_file> " << "<deviceID>" << std::endl;
         return -1;
     }
 

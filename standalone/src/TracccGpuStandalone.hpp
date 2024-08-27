@@ -1,6 +1,8 @@
 #include <iostream>
 #include <memory>
 
+#include <cuda_runtime.h>
+
 // Project include(s).
 #include "traccc/clusterization/clusterization_algorithm.hpp"
 #include "traccc/cuda/clusterization/clusterization_algorithm.hpp"
@@ -139,6 +141,18 @@ void read_cells(traccc::io::cell_reader_output &out,
                 const std::map<std::uint64_t, detray::geometry::barcode> *barcode_map, 
                 bool deduplicate);
 
+// function to set the CUDA device and get the stream
+static traccc::cuda::stream setCudaDeviceAndGetStream(int deviceID)
+{
+    cudaError_t err = cudaSetDevice(deviceID);
+    if (err != cudaSuccess)
+    {
+        throw std::runtime_error("Failed to set CUDA device: \
+                " + std::string(cudaGetErrorString(err)));
+    }
+    return traccc::cuda::stream(deviceID);
+}
+
 // Type definitions
 using host_detector_type = detray::detector<detray::default_metadata,
                                             detray::host_container_types>;
@@ -216,9 +230,9 @@ public:
         m_device_id(deviceID), 
         host_mr(),
         cuda_host_mr(),
-        device_mr(),
+        device_mr(deviceID),
         mr{device_mr, &cuda_host_mr},
-        stream(),
+        stream(setCudaDeviceAndGetStream(deviceID)),
         copy(stream.cudaStream()),
         host_detector(host_mr),
         ca_cuda(mr, copy, stream, clusterization_opts.target_cells_per_partition),
@@ -233,14 +247,6 @@ public:
         copy_track_candidates(mr, copy),
         copy_track_states(mr, copy)
     {
-        //! Set the CUDA device totally doesn't work
-        // cudaError_t err = cudaSetDevice(m_device_id);
-        // if (err != cudaSuccess)
-        // {
-        //     throw std::runtime_error("Failed to set CUDA device: " \
-        //                                 + std::string(cudaGetErrorString(err)));
-        // }
-
         initialize();
     }
 
@@ -256,6 +262,8 @@ public:
 
 void TracccGpuStandalone::initialize()
 {
+    std::cout << "Current device: " << stream.device() << std::endl;
+    
     // HACK: hard code location of detector and digitization file
     detector_opts.detector_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_geometry_detray.json";
     detector_opts.digitization_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-digi-geometric-config.json";

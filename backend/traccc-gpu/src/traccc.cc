@@ -451,6 +451,15 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
     RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceSetState(
         instance, reinterpret_cast<void*>(instance_state)));
 
+    // Set the CUDA device for this thread
+    cudaError_t err = cudaSetDevice(instance_state->DeviceId());
+    if (err != cudaSuccess)
+    {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            ("Failed to set CUDA device: " + std::string(cudaGetErrorString(err))).c_str());
+    }
+
     instance_state->traccc_gpu_standalone_ = std::make_unique<TracccGpuStandalone>(instance_state->DeviceId());
 
     // MARK: HACK to load data in server initialization
@@ -511,6 +520,17 @@ TRITONBACKEND_ModelInstanceExecute(
     RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(
         instance, reinterpret_cast<void**>(&instance_state)));
     ModelState* model_state = instance_state->StateForModel();
+
+    // Set the CUDA device for this thread
+    // Seems that this is necessary to set the device for each request
+    // Without leads to out-of-bounds memory access error
+    cudaError_t err = cudaSetDevice(instance_state->DeviceId());
+    if (err != cudaSuccess)
+    {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            ("Failed to set CUDA device: " + std::string(cudaGetErrorString(err))).c_str());
+    }
 
     // 'responses' is initialized as a parallel array to 'requests',
     // with one TRITONBACKEND_Response object for each
