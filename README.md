@@ -22,12 +22,6 @@ Simply clone the repository with
 git clone --recurse-submodules git@github.com:milescb/traccc-aaS.git
 ```
 
-_Note: an old release of `traccc` is used to match performance plots. In order to get the proper version for running do_
-
-```
-cd traccc && git checkout v0.10.0
-```
-
 ### Docker
 
 A docker built for the triton server can be found at `docexoty/tritonserver:latest`. To run this do

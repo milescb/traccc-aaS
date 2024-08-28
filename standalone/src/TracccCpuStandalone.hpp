@@ -16,7 +16,6 @@
 #include "traccc/options/detector.hpp"
 
 // algorithm options
-//! NOTE: these may not be necessary
 #include "traccc/options/program_options.hpp"
 #include "traccc/options/track_finding.hpp"
 #include "traccc/options/track_propagation.hpp"
@@ -101,9 +100,14 @@ traccc::cell_module get_module(const std::uint64_t geometry_id,
 
         // Set the value on the module description.
         const auto& binning_data = geo_it->segmentation.binningData();
-        assert(binning_data.size() >= 2);
-        result.pixel = {binning_data[0].min, binning_data[1].min,
-                        binning_data[0].step, binning_data[1].step};
+        assert(binning_data.size() > 0);
+        result.pixel.min_corner_x = binning_data[0].min;
+        result.pixel.pitch_x = binning_data[0].step;
+        if (binning_data.size() > 1) {
+            result.pixel.min_corner_y = binning_data[1].min;
+            result.pixel.pitch_y = binning_data[1].step;
+        }
+        result.pixel.dimension = geo_it->dimensions;
     }
 
     return result;
@@ -145,7 +149,7 @@ private:
     traccc::opts::track_seeding seeding_opts;
     traccc::opts::track_finding finding_opts;
     traccc::opts::track_propagation propagation_opts;
-    // detray::propagation::config propagation_config;
+    detray::propagation::config propagation_config;
     detray::io::detector_reader_config cfg;
     finding_algorithm::config_type finding_cfg;
     fitting_algorithm::config_type fitting_cfg;
@@ -216,24 +220,8 @@ void TracccClusterStandalone::initializePipeline()
     field = detray::bfield::create_const_field(field_vec);
 
     // initialize the track finding algorithm
-    // finding_cfg.propagation = propagation_config;
-    // fitting_cfg.propagation = propagation_config;
-    finding_cfg.min_track_candidates_per_track =
-        finding_opts.track_candidates_range[0];
-    finding_cfg.max_track_candidates_per_track =
-        finding_opts.track_candidates_range[1];
-    finding_cfg.min_step_length_for_next_surface =
-        finding_opts.min_step_length_for_next_surface;
-    finding_cfg.max_step_counts_for_next_surface =
-        finding_opts.max_step_counts_for_next_surface;
-    finding_cfg.chi2_max = finding_opts.chi2_max;
-    finding_cfg.max_num_branches_per_seed = finding_opts.nmax_per_seed;
-    finding_cfg.max_num_skipping_per_cand =
-        finding_opts.max_num_skipping_per_cand;
-    propagation_opts.setup(finding_cfg.propagation);
-
-    fitting_algorithm::config_type fitting_cfg;
-    propagation_opts.setup(fitting_cfg.propagation);
+    finding_cfg.propagation = propagation_config;
+    fitting_cfg.propagation = propagation_config;
 
 }
 

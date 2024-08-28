@@ -1,8 +1,6 @@
 #include <iostream>
 #include <memory>
 
-#include <cuda_runtime.h>
-
 // Project include(s).
 #include "traccc/clusterization/clusterization_algorithm.hpp"
 #include "traccc/cuda/clusterization/clusterization_algorithm.hpp"
@@ -196,7 +194,7 @@ private:
     traccc::opts::track_seeding seeding_opts;
     traccc::opts::track_finding finding_opts;
     traccc::opts::track_propagation propagation_opts;
-    // detray::propagation::config propagation_config;
+    detray::propagation::config propagation_config;
     // detector options
     traccc::geometry surface_transforms;
     std::unique_ptr<traccc::digitization_config> digi_cfg;
@@ -235,7 +233,7 @@ public:
         stream(setCudaDeviceAndGetStream(deviceID)),
         copy(stream.cudaStream()),
         host_detector(host_mr),
-        ca_cuda(mr, copy, stream, clusterization_opts.target_cells_per_partition),
+        ca_cuda(mr, copy, stream, clusterization_opts),
         ms_cuda(copy, stream),
         sf_cuda(mr, copy, stream),
         sa_cuda(seeding_opts.seedfinder, 
@@ -297,24 +295,8 @@ void TracccGpuStandalone::initialize()
     digi_cfg = std::make_unique<traccc::digitization_config>(traccc::io::read_digitization_config(detector_opts.digitization_file));
 
     // initialize the track finding algorithm
-    // finding_cfg.propagation = propagation_config;
-    // fitting_cfg.propagation = propagation_config;
-    finding_cfg.min_track_candidates_per_track =
-        finding_opts.track_candidates_range[0];
-    finding_cfg.max_track_candidates_per_track =
-        finding_opts.track_candidates_range[1];
-    finding_cfg.min_step_length_for_next_surface =
-        finding_opts.min_step_length_for_next_surface;
-    finding_cfg.max_step_counts_for_next_surface =
-        finding_opts.max_step_counts_for_next_surface;
-    finding_cfg.chi2_max = finding_opts.chi2_max;
-    finding_cfg.max_num_branches_per_seed = finding_opts.nmax_per_seed;
-    finding_cfg.max_num_skipping_per_cand =
-        finding_opts.max_num_skipping_per_cand;
-    propagation_opts.setup(finding_cfg.propagation);
-
-    host_fitting_algorithm::config_type fitting_cfg;
-    propagation_opts.setup(fitting_cfg.propagation);
+    finding_cfg.propagation = propagation_config;
+    fitting_cfg.propagation = propagation_config;
 
     return;
 }
