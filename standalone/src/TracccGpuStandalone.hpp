@@ -121,9 +121,14 @@ traccc::cell_module get_module(const std::uint64_t geometry_id,
 
         // Set the value on the module description.
         const auto& binning_data = geo_it->segmentation.binningData();
-        assert(binning_data.size() >= 2);
-        result.pixel = {binning_data[0].min, binning_data[1].min,
-                        binning_data[0].step, binning_data[1].step};
+        assert(binning_data.size() > 0);
+        result.pixel.min_corner_x = binning_data[0].min;
+        result.pixel.pitch_x = binning_data[0].step;
+        if (binning_data.size() > 1) {
+            result.pixel.min_corner_y = binning_data[1].min;
+            result.pixel.pitch_y = binning_data[1].step;
+        }
+        result.pixel.dimension = geo_it->dimensions;
     }
 
     return result;
@@ -232,6 +237,8 @@ public:
         mr{device_mr, &cuda_host_mr},
         stream(setCudaDeviceAndGetStream(deviceID)),
         copy(stream.cudaStream()),
+        propagation_config(propagation_opts),
+        finding_cfg(finding_opts),
         host_detector(host_mr),
         ca_cuda(mr, copy, stream, clusterization_opts),
         ms_cuda(copy, stream),
@@ -255,7 +262,8 @@ public:
     void run(std::vector<traccc::io::csv::cell> cells);
     std::vector<traccc::io::csv::cell> read_csv(const std::string &filename);
     std::vector<std::vector<double>> read_from_csv(const std::string &filename);
-    std::vector<traccc::io::csv::cell> read_from_array(const std::vector<std::vector<double>> &data);
+    std::vector<traccc::io::csv::cell> 
+        read_from_array(const std::vector<std::vector<double>> &data);
 };
 
 void TracccGpuStandalone::initialize()
@@ -306,12 +314,18 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     traccc::io::cell_reader_output read_out(mr.host);
 
     // Read the cells from the relevant event file into host memory.
-    read_cells(read_out, cells, &surface_transforms, digi_cfg.get(), barcode_map.get(), true);
+    read_cells(read_out, cells, &surface_transforms, 
+                digi_cfg.get(), barcode_map.get(), true);
 
     const traccc::cell_collection_types::host& cells_per_event =
         read_out.cells;
     const traccc::cell_module_collection_types::host&
         modules_per_event = read_out.modules;
+
+    std::cout << read_out.cells.size() << " cells read." << std::endl;
+    std::cout << read_out.modules.size() << " modules read." << std::endl;
+
+    traccc::measurement_collection_types::buffer measurements_cuda_buffer(0, *mr.host);
 
     // create buffers and copy to device
     traccc::cell_collection_types::buffer cells_buffer(
@@ -320,12 +334,10 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     traccc::cell_module_collection_types::buffer modules_buffer(
         modules_per_event.size(), mr.main);
     copy(vecmem::get_data(modules_per_event), modules_buffer);
-    stream.synchronize();
 
     //
     // ----------------- Clusterization -----------------
     // 
-    traccc::measurement_collection_types::buffer measurements_cuda_buffer(0, *mr.host);
     measurements_cuda_buffer = ca_cuda(cells_buffer, modules_buffer);
     ms_cuda(measurements_cuda_buffer);
 
@@ -423,8 +435,29 @@ std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_csv(const std::stri
     return cells;
 }
 
-std::map<std::uint64_t, std::map<traccc::cell, float, cell_order>> fill_cell_map(const std::vector<traccc::io::csv::cell> &cells, 
-                                                                                    unsigned int &nduplicates)
+std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const std::vector<std::vector<double>> &data)
+{
+    std::vector<traccc::io::csv::cell> cells;
+
+    for (const auto &row : data)
+    {
+        if (row.size() != 6)
+            continue; // ensure each row contains exactly 6 elements
+        traccc::io::csv::cell iocell;
+        // FIXME needs to decode to the correct type
+        iocell.geometry_id = static_cast<std::uint64_t>(row[0]);
+        iocell.hit_id = static_cast<int>(row[1]);
+        iocell.channel0 = static_cast<int>(row[2]);
+        iocell.channel1 = static_cast<int>(row[3]);
+        iocell.timestamp = static_cast<int>(row[4]);
+        iocell.value = row[5];
+        cells.push_back(iocell);
+    }
+
+    return cells;
+}
+
+std::map<std::uint64_t, std::map<traccc::cell, float, cell_order>> fill_cell_map(const std::vector<traccc::io::csv::cell> &cells, unsigned int &nduplicates)
 {
     std::map<std::uint64_t, std::map<traccc::cell, float, cell_order>> cellMap;
     nduplicates = 0;
@@ -488,8 +521,7 @@ void read_cells(traccc::io::cell_reader_output &out,
                 const std::vector<traccc::io::csv::cell> &cells, 
                 const traccc::geometry *geom, 
                 const traccc::digitization_config *dconfig, 
-                const std::map<std::uint64_t, 
-                detray::geometry::barcode> *barcode_map, 
+                const std::map<std::uint64_t, detray::geometry::barcode> *barcode_map, 
                 bool deduplicate)
 {
     auto cellsMap = (deduplicate ? read_deduplicated_cells(cells)
@@ -521,26 +553,4 @@ void read_cells(traccc::io::cell_reader_output &out,
             out.cells.back().module_link = out.modules.size() - 1;
         }
     }
-}
-
-std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const std::vector<std::vector<double>> &data)
-{
-    std::vector<traccc::io::csv::cell> cells;
-
-    for (const auto &row : data)
-    {
-        if (row.size() != 6)
-            continue; // ensure each row contains exactly 6 elements
-        traccc::io::csv::cell iocell;
-        // FIXME needs to decode to the correct type
-        iocell.geometry_id = static_cast<std::uint64_t>(row[0]);
-        iocell.hit_id = static_cast<int>(row[1]);
-        iocell.channel0 = static_cast<int>(row[2]);
-        iocell.channel1 = static_cast<int>(row[3]);
-        iocell.timestamp = static_cast<int>(row[4]);
-        iocell.value = row[5];
-        cells.push_back(iocell);
-    }
-
-    return cells;
 }
