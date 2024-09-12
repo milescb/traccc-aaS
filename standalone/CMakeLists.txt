@@ -1,8 +1,8 @@
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.22)
 
 # set project settings
 project(TracccStandalone LANGUAGES C CXX)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
@@ -33,13 +33,8 @@ foreach (_variableName ${_variableNames})
 endforeach()
 
 add_executable(TracccGpuStandalone src/TracccGpuStandalone.cpp)
-add_executable(TracccCpuStandalone src/TracccCpuStandalone.cpp)
 
 target_include_directories(TracccGpuStandalone 
-    PUBLIC src/${traccc_INCLUDE_DIR}
-)
-
-target_include_directories(TracccCpuStandalone 
     PUBLIC src/${traccc_INCLUDE_DIR}
 )
 
@@ -48,9 +43,4 @@ add_definitions(-DALGEBRA_PLUGINS_INCLUDE_ARRAY)
 target_link_libraries(TracccGpuStandalone PUBLIC 
     vecmem::core vecmem::cuda traccc::io traccc::performance
     traccc::core traccc::device_common traccc::cuda CUDA::cudart
-    traccc::options detray::utils detray::io detray::core)
-
-target_link_libraries(TracccCpuStandalone PUBLIC 
-    vecmem::core traccc::io traccc::performance
-    traccc::core traccc::device_common
     traccc::options detray::utils detray::io detray::core)

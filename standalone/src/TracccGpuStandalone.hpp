@@ -251,8 +251,8 @@ public:
         copy(stream.cudaStream()),
         clustering_config{128, 16, 8, 256},
         propagation_config(propagation_opts), //! may need to initialize in other ways!
-        finding_cfg(finding_opts),
         host_detector(host_mr),
+        finding_cfg(finding_opts),
         ca_cuda(mr, copy, stream, clustering_config),
         ms_cuda(copy, stream),
         sf_cuda(mr, copy, stream),
