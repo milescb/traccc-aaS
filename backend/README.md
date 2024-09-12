@@ -3,7 +3,7 @@ Taken in large part from [triton-inference-server/backend](https://github.com/tr
 
 ## Build model
 
-Both a cpu and gpu model are available. Both must be built separately as shown below:
+To build the model run
 
 ```
 cmake -B <build_dir> -S <source_dir> \

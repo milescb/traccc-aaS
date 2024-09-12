@@ -16,22 +16,17 @@ Run within the build directory
 ./TracccGpuStandalone $DATADIR/odd/geant4_10muon_10GeV/event000000000-cells.csv
 ```
 
-or to run the CPU version:
-
-```
-./TracccCpuStandalone $DATADIR/odd/geant4_10muon_10GeV/event000000000-cells.csv
-```
-
 ## Compare to official example
 
 Running the following is ~equivalent to what the standalone version does:
 
 ```
+rm -rf traccc/data && ln -s $DATADIR traccc/data # necessary to avoid bug with ODD detector
 $INSTALLDIR/bin/traccc_seq_example_cuda \
-    --detector-file=$DATADIR/geometries/odd/odd-detray_geometry_detray.json
-    --digitization-file=$DATADIR/geometries/odd/odd-digi-geometric-config.json \
-    --grid-file=$DATADIR/geometries/odd/odd-detray_surface_grids_detray.json \
+    --detector-file=geometries/odd/odd-detray_geometry_detray.json
+    --digitization-file=geometries/odd/odd-digi-geometric-config.json \
+    --grid-file=geometries/odd/odd-detray_surface_grids_detray.json \
     --input-directory=$DATADIR/odd/geant4_10muon_100GeV/
 ```
 
-Running without the option `--use-detray-detector` does not run track fitting or track finding. The CPU version of this executable is `$INSTALLDIR/bin/traccc_seq_example` and can be run exactly the same as above. 
+The CPU version of this executable is `$INSTALLDIR/bin/traccc_seq_example` and can be run exactly the same as above. 
