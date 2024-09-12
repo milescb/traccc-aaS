@@ -18,6 +18,13 @@
         "PATH": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_09042024_traccc_v0.15.0/install/bin:${env:PATH}",
         "LD_LIBRARY_PATH": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_09042024_traccc_v0.15.0/install/lib:${env:LD_LIBRARY_PATH}"
     },
+    "todo.embedded.exclude": [
+        "${workspaceFolder}/traccc/**",
+        "traccc/**",
+        "**/.git/**",
+        "**/build/**",
+        "**/install/**",
+    ],
     "files.associations": {
         "ostream": "cpp",
         "*.toml": "toml",

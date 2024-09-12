@@ -202,10 +202,10 @@ private:
     // CUDA types used.
     traccc::cuda::stream stream;
     vecmem::cuda::async_copy copy;
-    // opt inputs
-    traccc::opts::input_data input_opts;
+    // program configuration 
+    // TODO: may need to be initialized!
+    // look at how traccc::opts is configured
     traccc::clustering_config clustering_config;
-    traccc::opts::clusterization clusterization_opts;
     traccc::opts::accelerator accelerator_opts;
     traccc::opts::detector detector_opts;
     traccc::opts::track_seeding seeding_opts;
@@ -249,7 +249,7 @@ public:
         mr{device_mr, &cuda_host_mr},
         stream(setCudaDeviceAndGetStream(deviceID)),
         copy(stream.cudaStream()),
-        clustering_config{128, 16, 8, 256},
+        clustering_config{256, 16, 8, 256},
         propagation_config(propagation_opts), //! may need to initialize in other ways!
         host_detector(host_mr),
         finding_cfg(finding_opts),
