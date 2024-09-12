@@ -10,7 +10,7 @@ A minimal description of how to build a working version is detailed below. In ea
 
 ## Previous work
 
-The beginnings of this work is based on the CPU version included here developed by Haoran Zhao. The original repo can be found [here](https://github.com/hrzhao76/traccc-aaS). This CPU version has been incorporated into the workflow here such that both a CPU and GPU version are available. 
+The beginnings of this work is based on a CPU version developed by Haoran Zhao. The original repo can be found [here](https://github.com/hrzhao76/traccc-aaS). This CPU version has been incorporated into other branches of this work such as `odd_traccc_v0.10.0` but is omitted here for clarity. 
 
 ## Running out of the box
 
@@ -38,7 +38,7 @@ To run out of the box, an installation of `traccc` and the the backend can be fo
 
 ```
 export DATADIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/data
-export INSTALLDIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/software/dev/install
+export INSTALLDIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_09042024_traccc_v0.15.0/install
 export PATH=$INSTALLDIR/bin:$PATH
 export LD_LIBRARY_PATH=$INSTALLDIR/lib:$LD_LIBRARY_PATH
 ```
@@ -54,7 +54,7 @@ Once the server is launched, run the model via:
 ```
 cd client && python TracccTritionClient.py 
 ```
-The `--architecture` tag can be used to toggle the cpu and gpu version via `-a cpu`, for instance. More info in the client directory. 
+More info in the client directory. 
 
 ## Building the backend
 
@@ -69,7 +69,7 @@ cmake -B . -S ../ \
 cmake --build . --target install -- -j20
 ```
 
-Both the CPU and GPU versions must be built separately. Then, the server can be launched as above:
+Then, the server can be launched as above:
 
 ```
 tritonserver --model-repository=../../models
