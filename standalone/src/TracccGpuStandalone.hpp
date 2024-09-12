@@ -2,6 +2,7 @@
 #include <memory>
 
 // Project include(s).
+#include "traccc/clusterization/clustering_config.hpp"
 #include "traccc/clusterization/clusterization_algorithm.hpp"
 #include "traccc/cuda/clusterization/clusterization_algorithm.hpp"
 #include "traccc/cuda/clusterization/measurement_sorting_algorithm.hpp"
@@ -61,6 +62,28 @@
 
 // CUDA include(s).
 #include <cuda_runtime.h>
+
+// function to set the CUDA device and get the stream
+static traccc::cuda::stream setCudaDeviceAndGetStream(int deviceID)
+{
+    cudaError_t err = cudaSetDevice(deviceID);
+    if (err != cudaSuccess)
+    {
+        throw std::runtime_error("Failed to set CUDA device: \
+                " + std::string(cudaGetErrorString(err)));
+    }
+    return traccc::cuda::stream(deviceID);
+}
+
+/// Helper macro for checking the return value of CUDA function calls
+#define CUDA_ERROR_CHECK(EXP)                                                  \
+    do {                                                                       \
+        const cudaError_t errorCode = EXP;                                     \
+        if (errorCode != cudaSuccess) {                                        \
+            throw std::runtime_error(std::string("Failed to run " #EXP " (") + \
+                                     cudaGetErrorString(errorCode) + ")");     \
+        }                                                                      \
+    } while (false)
 
 // Definition of the cell_order struct
 struct cell_order
@@ -144,18 +167,6 @@ void read_cells(traccc::io::cell_reader_output &out,
                 const std::map<std::uint64_t, detray::geometry::barcode> *barcode_map, 
                 bool deduplicate);
 
-// function to set the CUDA device and get the stream
-static traccc::cuda::stream setCudaDeviceAndGetStream(int deviceID)
-{
-    cudaError_t err = cudaSetDevice(deviceID);
-    if (err != cudaSuccess)
-    {
-        throw std::runtime_error("Failed to set CUDA device: \
-                " + std::string(cudaGetErrorString(err)));
-    }
-    return traccc::cuda::stream(deviceID);
-}
-
 // Type definitions
 using host_detector_type = detray::detector<detray::default_metadata,
                                             detray::host_container_types>;
@@ -193,6 +204,7 @@ private:
     vecmem::cuda::async_copy copy;
     // opt inputs
     traccc::opts::input_data input_opts;
+    traccc::clustering_config clustering_config;
     traccc::opts::clusterization clusterization_opts;
     traccc::opts::accelerator accelerator_opts;
     traccc::opts::detector detector_opts;
@@ -237,10 +249,11 @@ public:
         mr{device_mr, &cuda_host_mr},
         stream(setCudaDeviceAndGetStream(deviceID)),
         copy(stream.cudaStream()),
-        propagation_config(propagation_opts),
+        clustering_config{128, 16, 8, 256},
+        propagation_config(propagation_opts), //! may need to initialize in other ways!
         finding_cfg(finding_opts),
         host_detector(host_mr),
-        ca_cuda(mr, copy, stream, clusterization_opts),
+        ca_cuda(mr, copy, stream, clustering_config),
         ms_cuda(copy, stream),
         sf_cuda(mr, copy, stream),
         sa_cuda(seeding_opts.seedfinder, 
@@ -252,6 +265,15 @@ public:
         copy_track_candidates(mr, copy),
         copy_track_states(mr, copy)
     {
+        // Tell the user what device is being used.
+        int device = 0;
+        CUDA_ERROR_CHECK(cudaGetDevice(&device));
+        cudaDeviceProp props;
+        CUDA_ERROR_CHECK(cudaGetDeviceProperties(&props, device));
+        std::cout << "Using CUDA device: " << props.name << " [id: " << device
+                << ", bus: " << props.pciBusID
+                << ", device: " << props.pciDeviceID << "]" << std::endl;
+
         initialize();
     }
 
@@ -268,7 +290,6 @@ public:
 
 void TracccGpuStandalone::initialize()
 {
-    std::cout << "Current device: " << stream.device() << std::endl;
     
     // HACK: hard code location of detector and digitization file
     detector_opts.detector_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_geometry_detray.json";
