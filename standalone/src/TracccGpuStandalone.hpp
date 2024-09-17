@@ -18,7 +18,7 @@
 #include "traccc/edm/track_state.hpp"
 #include "traccc/fitting/kalman_filter/kalman_fitter.hpp"
 #include "traccc/utils/algorithm.hpp"
-// #include "traccc/device/container_d2h_copy_alg.hpp"
+#include "traccc/device/container_d2h_copy_alg.hpp"
 
 // Detray include(s).
 #include "detray/core/detector.hpp"
@@ -281,11 +281,11 @@ private:
     device_fitting_algorithm m_fitting;
 
     // copying to cpu
-    // traccc::device::container_d2h_copy_alg<
-    //     traccc::track_candidate_container_types>
-    //     m_copy_track_candidates;
-    // traccc::device::container_d2h_copy_alg<traccc::track_state_container_types>
-    //     m_copy_track_states;
+    traccc::device::container_d2h_copy_alg<
+        traccc::track_candidate_container_types>
+        m_copy_track_candidates;
+    traccc::device::container_d2h_copy_alg<traccc::track_state_container_types>
+        m_copy_track_states;
 
 public:
     TracccGpuStandalone(int deviceID = 0) :
@@ -313,7 +313,9 @@ public:
                     m_mr, m_copy, m_stream),
         m_track_parameter_estimation(m_mr, m_copy, m_stream),
         m_finding(m_finding_config, m_mr, m_copy, m_stream),
-        m_fitting(m_fitting_config, m_mr, m_copy, m_stream)
+        m_fitting(m_fitting_config, m_mr, m_copy, m_stream),
+        m_copy_track_candidates(m_mr, m_copy),
+        m_copy_track_states(m_mr, m_copy)
     {
         // Tell the user what device is being used.
         int device = 0;
@@ -438,21 +440,20 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     //
     // ----------------- Print Statistics -----------------
     // 
-    std::cout << " done! " << std::endl;
-    // copy buffer to host
+    // // copy buffer to host
     // traccc::measurement_collection_types::host measurements_per_event_cuda;
     // traccc::spacepoint_collection_types::host spacepoints_per_event_cuda;
     // traccc::seed_collection_types::host seeds_cuda;
     // traccc::bound_track_parameters_collection_types::host params_cuda;
 
-    // copy(measurements_cuda_buffer, measurements_per_event_cuda)->wait();
-    // copy(spacepoints_cuda_buffer, spacepoints_per_event_cuda)->wait();
-    // copy(seeds_cuda_buffer, seeds_cuda)->wait();
-    // copy(params_cuda_buffer, params_cuda)->wait();
+    // m_copy(measurements, measurements_per_event_cuda)->wait();
+    // m_copy(spacepoints, spacepoints_per_event_cuda)->wait();
+    // m_copy(seeds, seeds_cuda)->wait();
+    // m_copy(track_params, params_cuda)->wait();
     // auto track_candidates_cuda =
-    //     copy_track_candidates(track_candidates_buffer);
-    // auto track_states_cuda = copy_track_states(track_states_buffer);
-    // stream.synchronize();
+    //     m_copy_track_candidates(track_candidates);
+    // auto track_states_cuda = m_copy_track_states(track_states);
+    // m_stream.synchronize();
 
     // // print results
     // std::cout << " " << std::endl;
@@ -462,12 +463,7 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     // std::cout << " - number of seeds created " << seeds_cuda.size() << std::endl;
     // std::cout << " - number of track candidates created " << track_candidates_cuda.size() << std::endl;
     // std::cout << " - number of fitted tracks created " << track_states_cuda.size() << std::endl;
-
-    // for (std::size_t i = 0; i < 10; ++i) {
-    //     auto measurement = measurements_per_event_cuda.at(i);
-    //     std::cout << "Measurement ID: " << measurement.measurement_id << std::endl;
-    //     std::cout << "Local coordinates: [" << measurement.local[0] << ", " << measurement.local[1] << "]" << std::endl; 
-    // }
+    std::cout << " done! " << std::endl;
 
     return;
 }
