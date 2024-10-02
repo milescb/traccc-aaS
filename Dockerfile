@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:experimental
 
-FROM nvcr.io/nvidia/tritonserver:24.04-py3
+FROM nvcr.io/nvidia/tritonserver:24.09-py3
 # nvcc version: 12.4 ## nvcc --version
 # cudnn version: 9.1.0  ## find / -name "libcudnn*" 2>/dev/null
 
@@ -162,13 +162,13 @@ RUN pip3 install onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualst
 #   && rm -rf src
 
 # # Install grpc
-# RUN git clone --recurse-submodules -b v1.64.1 --depth 1 https://github.com/grpc/grpc src\
-#     && cmake -B build -S src -DgRPC_INSTALL=ON \
-#         -DgRPC_BUILD_TESTS=OFF \
-#         -DCMAKE_INSTALL_PREFIX=${PREFIX} \
-#         -DCMAKE_BUILD_TYPE=Release \
-#     && cmake --build build -- install -j20 \
-#     && rm -rf src build
+RUN git clone --recurse-submodules -b v1.64.1 --depth 1 https://github.com/grpc/grpc src\
+    && cmake -B build -S src -DgRPC_INSTALL=ON \
+        -DgRPC_BUILD_TESTS=OFF \
+        -DCMAKE_INSTALL_PREFIX=${PREFIX} \
+        -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build -- install -j20 \
+    && rm -rf src build
 
 # install triton client
 RUN pip3 install tritonclient[all]
