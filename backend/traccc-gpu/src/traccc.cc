@@ -59,66 +59,65 @@ extern "C" {
 TRITONSERVER_Error*
 TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
 {
-    const char* cname;
-    RETURN_IF_ERROR(TRITONBACKEND_BackendName(backend, &cname));
-    std::string name(cname);
+  const char* cname;
+  RETURN_IF_ERROR(TRITONBACKEND_BackendName(backend, &cname));
+  std::string name(cname);
 
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("TRITONBACKEND_Initialize: ") + name).c_str());
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("TRITONBACKEND_Initialize: ") + name).c_str());
 
-    // Check the backend API version that Triton supports vs. what this
-    // backend was compiled against. Make sure that the Triton major
-    // version is the same and the minor version is >= what this backend
-    // uses.
-    uint32_t api_version_major, api_version_minor;
-    RETURN_IF_ERROR(
-        TRITONBACKEND_ApiVersion(&api_version_major, &api_version_minor));
+  // Check the backend API version that Triton supports vs. what this
+  // backend was compiled against. Make sure that the Triton major
+  // version is the same and the minor version is >= what this backend
+  // uses.
+  uint32_t api_version_major, api_version_minor;
+  RETURN_IF_ERROR(
+      TRITONBACKEND_ApiVersion(&api_version_major, &api_version_minor));
 
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("Triton TRITONBACKEND API version: ") +
-        std::to_string(api_version_major) + "." +
-        std::to_string(api_version_minor))
-            .c_str());
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("'") + name + "' TRITONBACKEND API version: " +
-        std::to_string(TRITONBACKEND_API_VERSION_MAJOR) + "." +
-        std::to_string(TRITONBACKEND_API_VERSION_MINOR))
-            .c_str());
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("Triton TRITONBACKEND API version: ") +
+       std::to_string(api_version_major) + "." +
+       std::to_string(api_version_minor))
+          .c_str());
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("'") + name + "' TRITONBACKEND API version: " +
+       std::to_string(TRITONBACKEND_API_VERSION_MAJOR) + "." +
+       std::to_string(TRITONBACKEND_API_VERSION_MINOR))
+          .c_str());
 
-    if ((api_version_major != TRITONBACKEND_API_VERSION_MAJOR) ||
-        (api_version_minor < TRITONBACKEND_API_VERSION_MINOR)) 
-    {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_UNSUPPORTED,
-            "triton backend API version does not support this backend");
-    }
+  if ((api_version_major != TRITONBACKEND_API_VERSION_MAJOR) ||
+      (api_version_minor < TRITONBACKEND_API_VERSION_MINOR)) {
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_UNSUPPORTED,
+        "triton backend API version does not support this backend");
+  }
 
-    // The backend configuration may contain information needed by the
-    // backend, such as tritonserver command-line arguments. This
-    // backend doesn't use any such configuration but for this example
-    // print whatever is available.
-    TRITONSERVER_Message* backend_config_message;
-    RETURN_IF_ERROR(
-        TRITONBACKEND_BackendConfig(backend, &backend_config_message));
+  // The backend configuration may contain information needed by the
+  // backend, such as tritonserver command-line arguments. This
+  // backend doesn't use any such configuration but for this example
+  // print whatever is available.
+  TRITONSERVER_Message* backend_config_message;
+  RETURN_IF_ERROR(
+      TRITONBACKEND_BackendConfig(backend, &backend_config_message));
 
-    const char* buffer;
-    size_t byte_size;
-    RETURN_IF_ERROR(TRITONSERVER_MessageSerializeToJson(
-        backend_config_message, &buffer, &byte_size));
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("backend configuration:\n") + buffer).c_str());
+  const char* buffer;
+  size_t byte_size;
+  RETURN_IF_ERROR(TRITONSERVER_MessageSerializeToJson(
+      backend_config_message, &buffer, &byte_size));
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("backend configuration:\n") + buffer).c_str());
 
-    // This backend does not require any "global" state but as an
-    // example create a string to demonstrate.
-    std::string* state = new std::string("backend state");
-    RETURN_IF_ERROR(
-        TRITONBACKEND_BackendSetState(backend, reinterpret_cast<void*>(state)));
+  // This backend does not require any "global" state but as an
+  // example create a string to demonstrate.
+  std::string* state = new std::string("backend state");
+  RETURN_IF_ERROR(
+      TRITONBACKEND_BackendSetState(backend, reinterpret_cast<void*>(state)));
 
-    return nullptr;  // success
+  return nullptr;  // success
 }
 
 // Triton calls TRITONBACKEND_Finalize when a backend is no longer
@@ -127,19 +126,19 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
 TRITONSERVER_Error*
 TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
 {
-    // Delete the "global" state associated with the backend.
-    void* vstate;
-    RETURN_IF_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
-    std::string* state = reinterpret_cast<std::string*>(vstate);
+  // Delete the "global" state associated with the backend.
+  void* vstate;
+  RETURN_IF_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
+  std::string* state = reinterpret_cast<std::string*>(vstate);
 
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("TRITONBACKEND_Finalize: state is '") + *state + "'")
-            .c_str());
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("TRITONBACKEND_Finalize: state is '") + *state + "'")
+          .c_str());
 
-    delete state;
+  delete state;
 
-    return nullptr;  // success
+  return nullptr;  // success
 }
 
 }  // extern "C"
@@ -154,46 +153,75 @@ TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
 // TRITONBACKEND_Model. ModelState is derived from BackendModel class
 // provided in the backend utilities that provides many common
 // functions.
-class ModelState : public BackendModel 
-{
-public:
-    static TRITONSERVER_Error* Create(
-        TRITONBACKEND_Model* triton_model, ModelState** state);
-    virtual ~ModelState() = default;
+//! Possible differences in this class!
+class ModelState : public BackendModel {
+ public:
+  static TRITONSERVER_Error* Create(
+      TRITONBACKEND_Model* triton_model, ModelState** state);
+  virtual ~ModelState() = default;
 
     // Name of the input and output tensor
-    const std::string& InputTensorName() const { return input_name_; }
-    const std::string& OutputTensorName() const { return output_name_; }
+    const std::string &InputGeoIdTensorName() const { return input_geoid_name_; }
+    const std::string &InputCellsTensorName() const { return input_cells_name_; }
+    const std::string &OutputTensorName() const { return output_name_; }
 
     // Datatype of the input and output tensor
-    TRITONSERVER_DataType TensorDataType() const { return datatype_; }
+    TRITONSERVER_DataType InputGeoIdTensorDataType() const { return input_geoid_datatype_; }
+    TRITONSERVER_DataType InputCellsTensorDataType() const { return input_cells_datatype_; }
+    TRITONSERVER_DataType OutputTensorDataType() const
+    {
+        return output_datatype_;
+    }
 
     // Shape of the input and output tensor as given in the model
     // configuration file. This shape will not include the batch
     // dimension (if the model has one).
-    const std::vector<int64_t>& TensorNonBatchShape() const { return nb_shape_; }
+    // const std::vector<int64_t>& TensorNonBatchShape() const { return nb_shape_;
+    // }
 
     // Shape of the input and output tensor, including the batch
     // dimension (if the model has one). This method cannot be called
     // until the model is completely loaded and initialized, including
     // all instances of the model. In practice, this means that backend
     // should only call it in TRITONBACKEND_ModelInstanceExecute.
-    // TRITONSERVER_Error* TensorShape(std::vector<int64_t>& shape);
+    const std::vector<int64_t> &InputGeoIdTensorNonBatchShape() const
+    {
+        return input_geoid_nb_shape_;
+    }
+    const std::vector<int64_t> &InputCellsTensorNonBatchShape() const
+    {
+        return input_cells_nb_shape_;
+    }
+    const std::vector<int64_t> &OutputTensorNonBatchShape() const
+    {
+        return output_nb_shape_;
+    }
 
     // Validate that this model is supported by this backend.
-    TRITONSERVER_Error* ValidateModelConfig();
+    TRITONSERVER_Error *ValidateModelConfig();
 
-private:
-    ModelState(TRITONBACKEND_Model* triton_model);
+    //   std::string model_path;
+    int64_t cellFeatures;
 
-    std::string input_name_;
+ private:
+  ModelState(TRITONBACKEND_Model* triton_model);
+
+    std::string input_geoid_name_;
+    std::string input_cells_name_;
     std::string output_name_;
 
-    TRITONSERVER_DataType datatype_;
+    TRITONSERVER_DataType input_geoid_datatype_;
+    TRITONSERVER_DataType input_cells_datatype_;
+    TRITONSERVER_DataType output_datatype_;
+
+    std::vector<int64_t> input_geoid_nb_shape_;
+    std::vector<int64_t> input_cells_nb_shape_;
+    std::vector<int64_t> input_geoid_shape_;
+    std::vector<int64_t> input_cells_shape_;
+    std::vector<int64_t> output_nb_shape_;
+    std::vector<int64_t> output_shape_;
 
     bool shape_initialized_;
-    std::vector<int64_t> nb_shape_;
-    std::vector<int64_t> shape_;
 };
 
 //! Also possible problems in this function!
@@ -208,19 +236,17 @@ ModelState::ModelState(TRITONBACKEND_Model* triton_model)
 TRITONSERVER_Error*
 ModelState::Create(TRITONBACKEND_Model* triton_model, ModelState** state)
 {
-    try 
-    {
-        *state = new ModelState(triton_model);
-    }
-    catch (const BackendModelException& ex) 
-    {
-        RETURN_ERROR_IF_TRUE(
-            ex.err_ == nullptr, TRITONSERVER_ERROR_INTERNAL,
-            std::string("unexpected nullptr in BackendModelException"));
-        RETURN_IF_ERROR(ex.err_);
-    }
+  try {
+    *state = new ModelState(triton_model);
+  }
+  catch (const BackendModelException& ex) {
+    RETURN_ERROR_IF_TRUE(
+        ex.err_ == nullptr, TRITONSERVER_ERROR_INTERNAL,
+        std::string("unexpected nullptr in BackendModelException"));
+    RETURN_IF_ERROR(ex.err_);
+  }
 
-    return nullptr;  // success
+  return nullptr;  // success
 }
 
 // TRITONSERVER_Error*
@@ -256,13 +282,12 @@ ModelState::ValidateModelConfig()
 {
     // If verbose logging is enabled, dump the model's configuration as
     // JSON into the console output.
-    if (TRITONSERVER_LogIsEnabled(TRITONSERVER_LOG_VERBOSE)) 
-    {
-        common::TritonJson::WriteBuffer buffer;
-        RETURN_IF_ERROR(ModelConfig().PrettyWrite(&buffer));
-        LOG_MESSAGE(
-            TRITONSERVER_LOG_VERBOSE,
-            (std::string("model configuration:\n") + buffer.Contents()).c_str());
+    if (TRITONSERVER_LogIsEnabled(TRITONSERVER_LOG_VERBOSE)) {
+    common::TritonJson::WriteBuffer buffer;
+    RETURN_IF_ERROR(ModelConfig().PrettyWrite(&buffer));
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_VERBOSE,
+        (std::string("model configuration:\n") + buffer.Contents()).c_str());
     }
 
     // ModelConfig is the model configuration as a TritonJson
@@ -272,64 +297,73 @@ ModelState::ValidateModelConfig()
     RETURN_IF_ERROR(ModelConfig().MemberAsArray("input", &inputs));
     RETURN_IF_ERROR(ModelConfig().MemberAsArray("output", &outputs));
 
-    // The model must have exactly 1 input and 1 output.
+        // The model must have exactly 2 inputs and 1 output.
     RETURN_ERROR_IF_FALSE(
-        inputs.ArraySize() == 1, TRITONSERVER_ERROR_INVALID_ARG,
-        std::string("model configuration must have 1 input"));
+        inputs.ArraySize() == 2, TRITONSERVER_ERROR_INVALID_ARG,
+        std::string("model configuration must have 2 inputs"));
     RETURN_ERROR_IF_FALSE(
         outputs.ArraySize() == 1, TRITONSERVER_ERROR_INVALID_ARG,
         std::string("model configuration must have 1 output"));
 
-    common::TritonJson::Value input, output;
-    RETURN_IF_ERROR(inputs.IndexAsObject(0, &input));
+    common::TritonJson::Value input_geoid, input_cells, output;
+    RETURN_IF_ERROR(inputs.IndexAsObject(0, &input_geoid));
+    RETURN_IF_ERROR(inputs.IndexAsObject(1, &input_cells));
     RETURN_IF_ERROR(outputs.IndexAsObject(0, &output));
 
     // Record the input and output name in the model state.
-    const char* input_name;
-    size_t input_name_len;
-    RETURN_IF_ERROR(input.MemberAsString("name", &input_name, &input_name_len));
-    input_name_ = std::string(input_name);
+    const char *input_geoid_name, *input_cells_name;
+    size_t input_geoid_len, input_cells_len;
+    RETURN_IF_ERROR(input_geoid.MemberAsString("name", &input_geoid_name, &input_geoid_len));
+    RETURN_IF_ERROR(input_cells.MemberAsString("name", &input_cells_name, &input_cells_len));
+    input_geoid_name_ = std::string(input_geoid_name);
+    input_cells_name_ = std::string(input_cells_name);
 
-    const char* output_name;
+    const char *output_name;
     size_t output_name_len;
     RETURN_IF_ERROR(
         output.MemberAsString("name", &output_name, &output_name_len));
     output_name_ = std::string(output_name);
 
     // Input and output must have same datatype
-    std::string input_dtype, output_dtype;
-    RETURN_IF_ERROR(input.MemberAsString("data_type", &input_dtype));
+    std::string input_geoid_dtype, input_cells_dtype, output_dtype;
+    RETURN_IF_ERROR(input_geoid.MemberAsString("data_type", &input_geoid_dtype));
+    RETURN_IF_ERROR(input_cells.MemberAsString("data_type", &input_cells_dtype));
     RETURN_IF_ERROR(output.MemberAsString("data_type", &output_dtype));
-    //   RETURN_ERROR_IF_FALSE(
-    //       input_dtype == output_dtype, TRITONSERVER_ERROR_INVALID_ARG,
-    //       std::string("expected input and output datatype to match, got ") +
-    //           input_dtype + " and " + output_dtype);
-    datatype_ = ModelConfigDataTypeToTritonServerDataType(input_dtype);
+    // RETURN_ERROR_IF_FALSE(
+    //     input_dtype == output_dtype, TRITONSERVER_ERROR_INVALID_ARG,
+    //     std::string("expected input and output datatype to match, got ") +
+    //         input_dtype + " and " + output_dtype);
+    input_geoid_datatype_ = ModelConfigDataTypeToTritonServerDataType(input_geoid_dtype);
+    input_cells_datatype_ = ModelConfigDataTypeToTritonServerDataType(input_cells_dtype);
+    output_datatype_ = ModelConfigDataTypeToTritonServerDataType(output_dtype);
 
     // Input and output must have same shape. Reshape is not supported
     // on either input or output so flag an error is the model
     // configuration uses it.
-    triton::common::TritonJson::Value reshape;
-    RETURN_ERROR_IF_TRUE(
-        input.Find("reshape", &reshape), TRITONSERVER_ERROR_UNSUPPORTED,
-        std::string("reshape not supported for input tensor"));
-    RETURN_ERROR_IF_TRUE(
-        output.Find("reshape", &reshape), TRITONSERVER_ERROR_UNSUPPORTED,
-        std::string("reshape not supported for output tensor"));
+    // triton::common::TritonJson::Value reshape;
+    // RETURN_ERROR_IF_TRUE(
+    //     input.Find("reshape", &reshape), TRITONSERVER_ERROR_UNSUPPORTED,
+    //     std::string("reshape not supported for input tensor"));
+    // RETURN_ERROR_IF_TRUE(
+    //     output.Find("reshape", &reshape), TRITONSERVER_ERROR_UNSUPPORTED,
+    //     std::string("reshape not supported for output tensor"));
 
-    std::vector<int64_t> input_shape, output_shape;
-    RETURN_IF_ERROR(backend::ParseShape(input, "dims", &input_shape));
+    std::vector<int64_t> input_geoid_shape, input_cells_shape, output_shape;
+    RETURN_IF_ERROR(backend::ParseShape(input_geoid, "dims", &input_geoid_shape));
+    RETURN_IF_ERROR(backend::ParseShape(input_cells, "dims", &input_cells_shape));
     RETURN_IF_ERROR(backend::ParseShape(output, "dims", &output_shape));
 
-    //   RETURN_ERROR_IF_FALSE(
-    //       input_shape == output_shape, TRITONSERVER_ERROR_INVALID_ARG,
-    //       std::string("expected input and output shape to match, got ") +
-    //           backend::ShapeToString(input_shape) + " and " +
-    //           backend::ShapeToString(output_shape));
+    // RETURN_ERROR_IF_FALSE(
+    //     input_shape == output_shape, TRITONSERVER_ERROR_INVALID_ARG,
+    //     std::string("expected input and output shape to match, got ") +
+    //         backend::ShapeToString(input_shape) + " and " +
+    //         backend::ShapeToString(output_shape));
 
-    nb_shape_ = input_shape;
+    input_geoid_nb_shape_ = input_geoid_shape;
+    input_cells_nb_shape_ = input_cells_shape;
+    output_nb_shape_ = output_shape;
 
-    return nullptr;  // success
+    return nullptr; // success
 }
 
 extern "C" {
@@ -343,16 +377,16 @@ extern "C" {
 TRITONSERVER_Error*
 TRITONBACKEND_ModelInitialize(TRITONBACKEND_Model* model)
 {
-    // Create a ModelState object and associate it with the
-    // TRITONBACKEND_Model. If anything goes wrong with initialization
-    // of the model state then an error is returned and Triton will fail
-    // to load the model.
-    ModelState* model_state;
-    RETURN_IF_ERROR(ModelState::Create(model, &model_state));
-    RETURN_IF_ERROR(
-        TRITONBACKEND_ModelSetState(model, reinterpret_cast<void*>(model_state)));
+  // Create a ModelState object and associate it with the
+  // TRITONBACKEND_Model. If anything goes wrong with initialization
+  // of the model state then an error is returned and Triton will fail
+  // to load the model.
+  ModelState* model_state;
+  RETURN_IF_ERROR(ModelState::Create(model, &model_state));
+  RETURN_IF_ERROR(
+      TRITONBACKEND_ModelSetState(model, reinterpret_cast<void*>(model_state)));
 
-    return nullptr;  // success
+  return nullptr;  // success
 }
 
 // Triton calls TRITONBACKEND_ModelFinalize when a model is no longer
@@ -363,12 +397,12 @@ TRITONBACKEND_ModelInitialize(TRITONBACKEND_Model* model)
 TRITONSERVER_Error*
 TRITONBACKEND_ModelFinalize(TRITONBACKEND_Model* model)
 {
-    void* vstate;
-    RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vstate));
-    ModelState* model_state = reinterpret_cast<ModelState*>(vstate);
-    delete model_state;
+  void* vstate;
+  RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vstate));
+  ModelState* model_state = reinterpret_cast<ModelState*>(vstate);
+  delete model_state;
 
-    return nullptr;  // success
+  return nullptr;  // success
 }
 
 }  // extern "C"
@@ -384,33 +418,30 @@ TRITONBACKEND_ModelFinalize(TRITONBACKEND_Model* model)
 // BackendModelInstance class provided in the backend utilities that
 // provides many common functions.
 //
-class ModelInstanceState : public BackendModelInstance 
-{
-public:
-    static TRITONSERVER_Error* Create(
-        ModelState* model_state,
-        TRITONBACKEND_ModelInstance* triton_model_instance,
-        ModelInstanceState** state);
-    virtual ~ModelInstanceState() = default;
+class ModelInstanceState : public BackendModelInstance {
+ public:
+  static TRITONSERVER_Error* Create(
+      ModelState* model_state,
+      TRITONBACKEND_ModelInstance* triton_model_instance,
+      ModelInstanceState** state);
+  virtual ~ModelInstanceState() = default;
 
-    // Get the state of the model that corresponds to this instance.
-    ModelState* StateForModel() const { return model_state_; }
+  // Get the state of the model that corresponds to this instance.
+  ModelState* StateForModel() const { return model_state_; }
 
-    // define standalone object
-    std::unique_ptr<TracccGpuStandalone> traccc_gpu_standalone_;
-    // define cells
-    std::vector<traccc::io::csv::cell> cells_;
+  // define standalone object
+  std::unique_ptr<TracccGpuStandalone> traccc_gpu_standalone_;
 
-private:
-    ModelInstanceState(
-        ModelState* model_state,
-        TRITONBACKEND_ModelInstance* triton_model_instance)
-        : BackendModelInstance(model_state, triton_model_instance),
-            model_state_(model_state)
-    {
-    }
+ private:
+  ModelInstanceState(
+      ModelState* model_state,
+      TRITONBACKEND_ModelInstance* triton_model_instance)
+      : BackendModelInstance(model_state, triton_model_instance),
+        model_state_(model_state)
+  {
+  }
 
-    ModelState* model_state_;
+  ModelState* model_state_;
 };
 
 TRITONSERVER_Error*
@@ -418,19 +449,17 @@ ModelInstanceState::Create(
     ModelState* model_state, TRITONBACKEND_ModelInstance* triton_model_instance,
     ModelInstanceState** state)
 {
-    try 
-    {
-        *state = new ModelInstanceState(model_state, triton_model_instance);
-    }
-    catch (const BackendModelInstanceException& ex) 
-    {
-        RETURN_ERROR_IF_TRUE(
-            ex.err_ == nullptr, TRITONSERVER_ERROR_INTERNAL,
-            std::string("unexpected nullptr in BackendModelInstanceException"));
-        RETURN_IF_ERROR(ex.err_);
-    }
+  try {
+    *state = new ModelInstanceState(model_state, triton_model_instance);
+  }
+  catch (const BackendModelInstanceException& ex) {
+    RETURN_ERROR_IF_TRUE(
+        ex.err_ == nullptr, TRITONSERVER_ERROR_INTERNAL,
+        std::string("unexpected nullptr in BackendModelInstanceException"));
+    RETURN_IF_ERROR(ex.err_);
+  }
 
-    return nullptr;  // success
+  return nullptr;  // success
 }
 
 extern "C" {
@@ -442,39 +471,24 @@ extern "C" {
 TRITONSERVER_Error*
 TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
 {
-    // Get the model state associated with this instance's model.
-    TRITONBACKEND_Model* model;
-    RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceModel(instance, &model));
+  // Get the model state associated with this instance's model.
+  TRITONBACKEND_Model* model;
+  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceModel(instance, &model));
 
-    void* vmodelstate;
-    RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vmodelstate));
-    ModelState* model_state = reinterpret_cast<ModelState*>(vmodelstate);
+  void* vmodelstate;
+  RETURN_IF_ERROR(TRITONBACKEND_ModelState(model, &vmodelstate));
+  ModelState* model_state = reinterpret_cast<ModelState*>(vmodelstate);
 
-    // Create a ModelInstanceState object and associate it with the
-    // TRITONBACKEND_ModelInstance.
-    ModelInstanceState* instance_state;
-    RETURN_IF_ERROR(
-        ModelInstanceState::Create(model_state, instance, &instance_state));
-    RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceSetState(
-        instance, reinterpret_cast<void*>(instance_state)));
-
-    // Set the CUDA device for this thread
-    cudaError_t err = cudaSetDevice(instance_state->DeviceId());
-    if (err != cudaSuccess)
-    {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INTERNAL,
-            ("Failed to set CUDA device: " + std::string(cudaGetErrorString(err))).c_str());
-    }
-
-    instance_state->traccc_gpu_standalone_ = std::make_unique<TracccGpuStandalone>(instance_state->DeviceId());
-
-    // MARK: HACK to load data in server initialization
-    // load the data
-    std::string input_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data_odd_ttbar_large/geant4_ttbar_mu200/event000000000-cells.csv";
-    instance_state->cells_ = instance_state->traccc_gpu_standalone_->read_csv(input_file);
-
-    return nullptr;  // success
+  // Create a ModelInstanceState object and associate it with the
+  // TRITONBACKEND_ModelInstance.
+  ModelInstanceState* instance_state;
+  RETURN_IF_ERROR(
+      ModelInstanceState::Create(model_state, instance, &instance_state));
+  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceSetState(
+      instance, reinterpret_cast<void*>(instance_state)));
+  
+  instance_state->traccc_gpu_standalone_ = std::make_unique<TracccGpuStandalone>(instance_state->DeviceId());
+  return nullptr;  // success
 }
 
 // Triton calls TRITONBACKEND_ModelInstanceFinalize when a model
@@ -484,13 +498,13 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
 TRITONSERVER_Error*
 TRITONBACKEND_ModelInstanceFinalize(TRITONBACKEND_ModelInstance* instance)
 {
-    void* vstate;
-    RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(instance, &vstate));
-    ModelInstanceState* instance_state =
-        reinterpret_cast<ModelInstanceState*>(vstate);
-    delete instance_state;
+  void* vstate;
+  RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(instance, &vstate));
+  ModelInstanceState* instance_state =
+      reinterpret_cast<ModelInstanceState*>(vstate);
+  delete instance_state;
 
-    return nullptr;  // success
+  return nullptr;  // success
 }
 
 }  // extern "C"
@@ -528,17 +542,6 @@ TRITONBACKEND_ModelInstanceExecute(
         instance, reinterpret_cast<void**>(&instance_state)));
     ModelState* model_state = instance_state->StateForModel();
 
-    // Set the CUDA device for this thread
-    // Seems that this is necessary to set the device for each request
-    // Without leads to out-of-bounds memory access error
-    cudaError_t err = cudaSetDevice(instance_state->DeviceId());
-    if (err != cudaSuccess)
-    {
-        return TRITONSERVER_ErrorNew(
-            TRITONSERVER_ERROR_INTERNAL,
-            ("Failed to set CUDA device: " + std::string(cudaGetErrorString(err))).c_str());
-    }
-
     // 'responses' is initialized as a parallel array to 'requests',
     // with one TRITONBACKEND_Response object for each
     // TRITONBACKEND_Request object. If something goes wrong while
@@ -552,12 +555,11 @@ TRITONBACKEND_ModelInstanceExecute(
 
     std::vector<TRITONBACKEND_Response*> responses;
     responses.reserve(request_count);
-    for (uint32_t r = 0; r < request_count; ++r) 
-    {
-        TRITONBACKEND_Request* request = requests[r];
-        TRITONBACKEND_Response* response;
-        RETURN_IF_ERROR(TRITONBACKEND_ResponseNew(&response, request));
-        responses.push_back(response);
+    for (uint32_t r = 0; r < request_count; ++r) {
+    TRITONBACKEND_Request* request = requests[r];
+    TRITONBACKEND_Response* response;
+    RETURN_IF_ERROR(TRITONBACKEND_ResponseNew(&response, request));
+    responses.push_back(response);
     }
 
     // At this point, the backend takes ownership of 'requests', which
@@ -612,18 +614,26 @@ TRITONBACKEND_ModelInstanceExecute(
     std::vector<std::pair<TRITONSERVER_MemoryType, int64_t>> allowed_input_types =
         {{TRITONSERVER_MEMORY_CPU_PINNED, 0}, {TRITONSERVER_MEMORY_CPU, 0}};
 
-    const char* input_buffer;
-    size_t input_buffer_byte_size;
-    TRITONSERVER_MemoryType input_buffer_memory_type;
-    int64_t input_buffer_memory_type_id;
+    const char *input_geoid_buffer, *input_cells_buffer;
+    size_t input_geoid_buffer_byte_size, input_cells_buffer_byte_size;
+    TRITONSERVER_MemoryType input_geoid_buffer_memory_type, input_cells_buffer_memory_type;
+    int64_t input_geoid_buffer_memory_type_id, input_cells_buffer_memory_type_id;
 
     RESPOND_ALL_AND_SET_NULL_IF_ERROR(
         responses, request_count,
         collector.ProcessTensor(
-            model_state->InputTensorName().c_str(), nullptr /* existing_buffer */,
-            0 /* existing_buffer_byte_size */, allowed_input_types, &input_buffer,
-            &input_buffer_byte_size, &input_buffer_memory_type,
-            &input_buffer_memory_type_id));
+            model_state->InputGeoIdTensorName().c_str(), nullptr /* existing_buffer */,
+            0 /* existing_buffer_byte_size */, allowed_input_types, &input_geoid_buffer,
+            &input_geoid_buffer_byte_size, &input_geoid_buffer_memory_type,
+            &input_geoid_buffer_memory_type_id));
+
+    RESPOND_ALL_AND_SET_NULL_IF_ERROR(
+        responses, request_count,
+        collector.ProcessTensor(
+            model_state->InputCellsTensorName().c_str(), nullptr /* existing_buffer */,
+            0 /* existing_buffer_byte_size */, allowed_input_types, &input_cells_buffer,
+            &input_cells_buffer_byte_size, &input_cells_buffer_memory_type,
+            &input_cells_buffer_memory_type_id));
 
     // Finalize the collector. If 'true' is returned, 'input_buffer'
     // will not be valid until the backend synchronizes the CUDA
@@ -631,10 +641,11 @@ TRITONBACKEND_ModelInstanceExecute(
     // this backend, GPU is not supported and so no CUDA sync should
     // be needed; so if 'true' is returned simply log an error.
     const bool need_cuda_input_sync = collector.Finalize();
-    if (need_cuda_input_sync) {
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_ERROR,
-        "'traccc' backend: unexpected CUDA sync required by collector");
+    if (need_cuda_input_sync)
+    {
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_ERROR,
+            "'Traccc' backend: unexpected CUDA sync required by collector");
     }
 
     // 'input_buffer' contains the batched input tensor. The backend can
@@ -645,45 +656,50 @@ TRITONBACKEND_ModelInstanceExecute(
 
     uint64_t compute_start_ns = 0;
     SET_TIMESTAMP(compute_start_ns);
+    TRITONSERVER_MemoryType output_buffer_memory_type = input_cells_buffer_memory_type;
+    int64_t output_buffer_memory_type_id = input_cells_buffer_memory_type_id;
 
-    // const char* output_buffer = input_buffer;
-    TRITONSERVER_MemoryType output_buffer_memory_type = input_buffer_memory_type;
-    int64_t output_buffer_memory_type_id = input_buffer_memory_type_id;
+    // Determine the number of floats in the input buffer
+    size_t num_uint_geoid = input_geoid_buffer_byte_size / sizeof(std::uint64_t);
+    size_t num_floats_cells = input_cells_buffer_byte_size / sizeof(double);
 
-    // // Determine the number of floats in the input buffer
-    // size_t num_floats = input_buffer_byte_size / sizeof(double);
+    // Convert the input buffer to a float pointer
+    const std::uint64_t *uint_geoid_ptr = reinterpret_cast<const std::uint64_t *>(input_geoid_buffer);
+    const double *double_ptr = reinterpret_cast<const double *>(input_cells_buffer);
 
-    // // Convert the input buffer to a float pointer
-    // const double *double_ptr = reinterpret_cast<const double *>(input_buffer);
+    // Assuming each row in the input cells 2D array has 5 elements as per the config
+    size_t num_features_cells = 5;
+    size_t num_rows_cells = num_floats_cells / num_features_cells;
 
-    // // Assuming each row in the input 2D array has 6 elements as per the config
-    // size_t num_features = 6;
-    // size_t num_rows = num_floats / num_features;
+    // Convert the input buffer to a 2D vector
+    std::vector<std::vector<double>> input_data_cells;
+    std::vector<std::uint64_t> input_data_geoid;
+    input_data_geoid.reserve(num_uint_geoid);
+    input_data_cells.reserve(num_rows_cells);
 
-    // // Convert the input buffer to a 2D vector
-    // std::vector<std::vector<double>> input_data;
-    // input_data.reserve(num_rows);
+    // FIXME type 
+    for (size_t i = 0; i < num_rows_cells; ++i) {
+        std::vector<double> row;
+        row.reserve(num_features_cells);
+        for (size_t j = 0; j < num_features_cells; ++j) {
+            row.push_back(static_cast<double>(double_ptr[i * num_features_cells + j]));
+        }
+        input_data_cells.push_back(row);
+        input_data_geoid.push_back(uint_geoid_ptr[i]);
+    }
 
-    // for (size_t i = 0; i < num_rows; ++i) {
-    //     std::vector<double> row;
-    //     row.reserve(num_features);
-    //     for (size_t j = 0; j < num_features; ++j) {
-    //         row.push_back(static_cast<double>(double_ptr[i * num_features + j]));
-    //     }
-    //     input_data.push_back(row);
-    // }
+    int numCells = input_data_cells.size();
+    std::cout << "Number of cells received: " << numCells  << std::endl;
+    for (int i = 0; i < 5; ++i) {
+        std::cout << "Cell " << i << ": ";
+        std::cout << input_data_geoid[i] << " ";
+        for (size_t j = 0; j < num_features_cells; ++j) {
+            std::cout << input_data_cells[i][j] << " ";
+        }
+        std::cout << std::endl;
+    }
 
-    // int numCells = input_data.size();
-    // std::cout << "Number of cells received: " << numCells  << std::endl;
-    // for (int i = 0; i < 5; ++i) {
-    //     std::cout << "Cell " << i << ": ";
-    //     for (size_t j = 0; j < num_features; ++j) {
-    //         std::cout << input_data[i][j] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-    // MARK: Run the pipeline
-    const std::vector<traccc::io::csv::cell>& cells = instance_state->cells_;
+    std::vector<traccc::io::csv::cell> cells = instance_state->traccc_gpu_standalone_->read_from_array(input_data_geoid, input_data_cells);
     instance_state->traccc_gpu_standalone_->run(cells);
 
     std::vector<int64_t> output_data(
@@ -739,7 +755,7 @@ TRITONBACKEND_ModelInstanceExecute(
         nullptr /* stream*/);
 
     responder.ProcessTensor(
-        model_state->OutputTensorName().c_str(), model_state->TensorDataType(),
+        model_state->OutputTensorName().c_str(), model_state->OutputTensorDataType(),
         output_tensor_shape, output_buffer, output_buffer_memory_type,
         output_buffer_memory_type_id);
 
@@ -759,12 +775,12 @@ TRITONBACKEND_ModelInstanceExecute(
     // Send all the responses that haven't already been sent because of
     // an earlier error.
     for (auto& response : responses) {
-        if (response != nullptr) {
-            LOG_IF_ERROR(
-                TRITONBACKEND_ResponseSend(
-                    response, TRITONSERVER_RESPONSE_COMPLETE_FINAL, nullptr),
-                "failed to send response");
-        }
+    if (response != nullptr) {
+        LOG_IF_ERROR(
+            TRITONBACKEND_ResponseSend(
+                response, TRITONSERVER_RESPONSE_COMPLETE_FINAL, nullptr),
+            "failed to send response");
+    }
     }
 
     uint64_t exec_end_ns = 0;

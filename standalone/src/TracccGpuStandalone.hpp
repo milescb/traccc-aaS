@@ -337,7 +337,8 @@ public:
     std::vector<traccc::io::csv::cell> read_csv(const std::string &filename);
     std::vector<std::vector<double>> read_from_csv(const std::string &filename);
     std::vector<traccc::io::csv::cell> 
-        read_from_array(const std::vector<std::vector<double>> &data);
+        read_from_array(const std::vector<std::uint64_t> &geometry_ids,
+                            const std::vector<std::vector<double>> &data);
 };
 
 void TracccGpuStandalone::initialize()
@@ -488,22 +489,39 @@ std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_csv(const std::stri
     return cells;
 }
 
-std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const std::vector<std::vector<double>> &data)
+std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const std::vector<std::uint64_t> &geometry_ids,
+                                                                            const std::vector<std::vector<double>> &data)
 {
     std::vector<traccc::io::csv::cell> cells;
 
-    for (const auto &row : data)
+    if (geometry_ids.size() != data.size())
     {
-        if (row.size() != 6)
-            continue; // ensure each row contains exactly 6 elements
+        throw std::runtime_error("Number of geometry IDs and data rows do not match.");
+    }
+
+    for (size_t i = 0; i < data.size(); ++i) 
+    {
+        const auto& row = data[i];
+        if (row.size() != 5)
+            continue; 
+
         traccc::io::csv::cell iocell;
-        // FIXME needs to decode to the correct type
-        iocell.geometry_id = static_cast<std::uint64_t>(row[0]);
-        iocell.hit_id = static_cast<int>(row[1]);
-        iocell.channel0 = static_cast<int>(row[2]);
-        iocell.channel1 = static_cast<int>(row[3]);
-        iocell.timestamp = static_cast<int>(row[4]);
-        iocell.value = row[5];
+
+        if (i < geometry_ids.size()) 
+        {
+            iocell.geometry_id = geometry_ids[i];
+        } 
+        else 
+        {
+            continue;
+        }
+
+        iocell.hit_id = static_cast<int>(row[0]);
+        iocell.channel0 = static_cast<int>(row[1]);
+        iocell.channel1 = static_cast<int>(row[2]);
+        iocell.timestamp = static_cast<int>(row[3]);
+        iocell.value = row[4];
+
         cells.push_back(iocell);
     }
 

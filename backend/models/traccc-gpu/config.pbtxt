@@ -1,10 +1,15 @@
 backend: "traccc"
 max_batch_size: 0
 input [
+   {
+    name: "GEOMETRY_ID"
+    data_type: TYPE_UINT64
+    dims: [ -1 ]
+  },
   {
     name: "FEATURES"
     data_type: TYPE_FP64
-    dims: [ -1, 6 ]
+    dims: [ -1, 5 ]
   }
 ]
 output [
@@ -17,8 +22,7 @@ output [
 instance_group [
   {
     count: 1
-    kind: KIND_GPU
-    gpus: [ 0 ]
+    kind: KIND_CPU
   }
 ]
 
