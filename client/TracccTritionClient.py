@@ -30,12 +30,33 @@ def main():
     inputs[1].set_data_from_numpy(input1_data)
     async_requests.append(triton_client.async_infer(f"traccc-{FLAGS.architecture}", inputs))
 
-    for async_request in async_requests:
-        # Get the result from the initiated asynchronous inference
-        # request. This call will block till the server responds.
-        result = async_request.get_result()
-        print("Response: {}".format(result.get_response()))
-        print("OUTPUT = {}".format(result.as_numpy("LABELS")))
+    # Define the outputs to retrieve
+    output_names = ["chi2", "ndf", "local_positions", "covariances"]
+    outputs = [httpclient.InferRequestedOutput(name) for name in output_names]
+
+    # Send the inference request
+    async_request = triton_client.async_infer(
+        model_name=f"traccc-{FLAGS.architecture}",
+        inputs=inputs,
+        outputs=outputs
+    )
+
+    # Collect the result
+    result = async_request.get_result()
+
+    # Retrieve and process outputs
+    chi2 = result.as_numpy("chi2")  # Should be shape (1,)
+    ndf = result.as_numpy("ndf")    # Should be shape (1,)
+    local_positions = result.as_numpy("local_positions")  # Shape (N, 2)
+    covariances = result.as_numpy("covariances")          # Shape (N, 2, 2)
+
+    # Print the outputs
+    print("chi2:", chi2)
+    print("ndf:", ndf)
+    print("local_positions shape:", local_positions.shape)
+    print("local_positions:", local_positions)
+    print("covariances shape:", covariances.shape)
+    print("covariances:", covariances)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

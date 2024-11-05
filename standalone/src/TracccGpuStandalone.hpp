@@ -200,6 +200,17 @@ using host_fitting_algorithm = traccc::fitting_algorithm<
 using device_fitting_algorithm = traccc::cuda::fitting_algorithm<
     traccc::kalman_fitter<stepper_type, device_navigator_type>>;
 
+using output_type = traccc::host_container<traccc::fitting_result<detray::cmath<float> >, 
+                        traccc::track_state<detray::cmath<float> > >;
+
+struct TrackFittingResult
+{
+    float chi2;
+    float ndf;
+    std::vector<std::array<float, 2>> local_positions;
+    std::vector<std::array<float, 4>> covariances;
+};
+
 class TracccGpuStandalone
 {
 private:
@@ -281,11 +292,10 @@ private:
     device_fitting_algorithm m_fitting;
 
     // copying to cpu
-    traccc::device::container_d2h_copy_alg<
-        traccc::track_candidate_container_types>
-        m_copy_track_candidates;
-    traccc::device::container_d2h_copy_alg<traccc::track_state_container_types>
-        m_copy_track_states;
+    // traccc::device::container_d2h_copy_alg<
+    //     traccc::track_candidate_container_types>
+    //     m_copy_track_candidates;
+    traccc::device::container_d2h_copy_alg<traccc::track_state_container_types> m_copy_track_states;
 
 public:
     TracccGpuStandalone(int deviceID = 0) :
@@ -314,7 +324,6 @@ public:
         m_track_parameter_estimation(m_mr, m_copy, m_stream),
         m_finding(m_finding_config, m_mr, m_copy, m_stream),
         m_fitting(m_fitting_config, m_mr, m_copy, m_stream),
-        m_copy_track_candidates(m_mr, m_copy),
         m_copy_track_states(m_mr, m_copy)
     {
         // Tell the user what device is being used.
@@ -333,7 +342,7 @@ public:
     ~TracccGpuStandalone() = default;
 
     void initialize();
-    void run(std::vector<traccc::io::csv::cell> cells);
+    TrackFittingResult run(std::vector<traccc::io::csv::cell> cells);
     std::vector<traccc::io::csv::cell> read_csv(const std::string &filename);
     std::vector<std::vector<double>> read_from_csv(const std::string &filename);
     std::vector<traccc::io::csv::cell> 
@@ -376,7 +385,7 @@ void TracccGpuStandalone::initialize()
     return;
 }
 
-void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
+TrackFittingResult TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
 {
     traccc::io::cell_reader_output read_out(m_mr.host);
 
@@ -433,9 +442,10 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     const device_fitting_algorithm::output_type track_states = m_fitting(
         m_device_detector_view, m_field, track_candidates);
 
-    // // Copy a limited amount of result data back to the host.
-    // output_type result{&m_host_mr};
+    // // // Copy a limited amount of result data back to the host.
+    // device_fitting_algorithm::output_type result{&m_host_mr};
     // m_copy(track_states.headers, result)->wait();
+
     // return result;
 
     //
@@ -453,8 +463,44 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     // m_copy(track_params, params_cuda)->wait();
     // auto track_candidates_cuda =
     //     m_copy_track_candidates(track_candidates);
-    // auto track_states_cuda = m_copy_track_states(track_states);
-    // m_stream.synchronize();
+    TrackFittingResult result;
+    auto track_states_host = m_copy_track_states(track_states);
+    const auto& headers = track_states_host.get_headers();
+    const auto& items = track_states_host.get_items();
+
+    std::cout << "Number of headers: " << headers.size() << std::endl;
+
+    if (!headers.empty()) 
+    {
+        result.chi2 = headers[0].chi2;
+        result.ndf = headers[0].ndf;
+    }
+
+    std::cout << "Number of tracks: " << items.size() << std::endl;
+
+    for (size_t i = 0; i < items.size(); ++i) {
+        const auto& track = items[i];
+        std::cout << "Track " << i << " has " << track.size() << " states." << std::endl;
+
+        for (size_t j = 0; j < track.size(); ++j) {
+            const auto& state = track[j];
+            // const auto& measurement = state.get_measurement();
+            auto local_pos = state.measurement_local<2>();
+            auto covariance = state.measurement_covariance<2>();
+
+            // Correct accessing of local_pos elements
+            float x = local_pos[0][0];
+            float y = local_pos[0][1];
+            result.local_positions.push_back({x, y});
+
+            // Correct accessing of covariance elements
+            float c00 = covariance[0][0];
+            float c01 = covariance[0][1];
+            float c10 = covariance[1][0];
+            float c11 = covariance[1][1];
+            result.covariances.push_back({c00, c01, c10, c11});
+        }
+    }
 
     // // print results
     // std::cout << " " << std::endl;
@@ -463,10 +509,10 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     // std::cout << " - number of spacepoints created " << spacepoints_per_event_cuda.size() << std::endl;
     // std::cout << " - number of seeds created " << seeds_cuda.size() << std::endl;
     // std::cout << " - number of track candidates created " << track_candidates_cuda.size() << std::endl;
-    // std::cout << " - number of fitted tracks created " << track_states_cuda.size() << std::endl;
+    std::cout << " - number of fitted tracks created " << track_states_host.size() << std::endl;
     std::cout << " done! " << std::endl;
 
-    return;
+    return result;
 }
 
 // deal with input data

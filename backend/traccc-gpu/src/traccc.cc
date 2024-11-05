@@ -249,34 +249,6 @@ ModelState::Create(TRITONBACKEND_Model* triton_model, ModelState** state)
   return nullptr;  // success
 }
 
-// TRITONSERVER_Error*
-// ModelState::TensorShape(std::vector<int64_t>& shape)
-// {
-//   // This backend supports models that batch along the first dimension
-//   // and those that don't batch. For non-batch models the output shape
-//   // will be the shape from the model configuration. For batch models
-//   // the output shape will be the shape from the model configuration
-//   // prepended with [ -1 ] to represent the batch dimension. The
-//   // backend "responder" utility used below will set the appropriate
-//   // batch dimension value for each response. The shape needs to be
-//   // initialized lazily because the SupportsFirstDimBatching function
-//   // cannot be used until the model is completely loaded.
-//   if (!shape_initialized_) {
-//     bool supports_first_dim_batching;
-//     RETURN_IF_ERROR(SupportsFirstDimBatching(&supports_first_dim_batching));
-//     if (supports_first_dim_batching) {
-//       shape_.push_back(-1);
-//     }
-
-//     shape_.insert(shape_.end(), nb_shape_.begin(), nb_shape_.end());
-//     shape_initialized_ = true;
-//   }
-
-//   shape = shape_;
-
-//   return nullptr;  // success
-// }
-
 TRITONSERVER_Error*
 ModelState::ValidateModelConfig()
 {
@@ -302,7 +274,7 @@ ModelState::ValidateModelConfig()
         inputs.ArraySize() == 2, TRITONSERVER_ERROR_INVALID_ARG,
         std::string("model configuration must have 2 inputs"));
     RETURN_ERROR_IF_FALSE(
-        outputs.ArraySize() == 1, TRITONSERVER_ERROR_INVALID_ARG,
+        outputs.ArraySize() == 4, TRITONSERVER_ERROR_INVALID_ARG,
         std::string("model configuration must have 1 output"));
 
     common::TritonJson::Value input_geoid, input_cells, output;
@@ -656,8 +628,6 @@ TRITONBACKEND_ModelInstanceExecute(
 
     uint64_t compute_start_ns = 0;
     SET_TIMESTAMP(compute_start_ns);
-    TRITONSERVER_MemoryType output_buffer_memory_type = input_cells_buffer_memory_type;
-    int64_t output_buffer_memory_type_id = input_cells_buffer_memory_type_id;
 
     // Determine the number of floats in the input buffer
     size_t num_uint_geoid = input_geoid_buffer_byte_size / sizeof(std::uint64_t);
@@ -700,26 +670,7 @@ TRITONBACKEND_ModelInstanceExecute(
     }
 
     std::vector<traccc::io::csv::cell> cells = instance_state->traccc_gpu_standalone_->read_from_array(input_data_geoid, input_data_cells);
-    instance_state->traccc_gpu_standalone_->run(cells);
-
-    std::vector<int64_t> output_data(
-        1, -1); // Initialized all to -1
-    output_data[0] = 100;
-
-//   LOG_MESSAGE(
-//       TRITONSERVER_LOG_INFO,
-//       (std::string("model ") + model_state->Name() + ": requests in batch " +
-//        std::to_string(request_count))
-//           .c_str());
-//   std::string tstr;
-//   IGNORE_ERROR(BufferAsTypedString(
-//       tstr, input_buffer, input_buffer_byte_size,
-//       model_state->TensorDataType()));
-//   LOG_MESSAGE(
-//       TRITONSERVER_LOG_INFO,
-//       (std::string("batched " + model_state->InputTensorName() + " value: ") +
-//        tstr)
-//           .c_str());
+    TrackFittingResult result = instance_state->traccc_gpu_standalone_->run(cells);
 
     uint64_t compute_end_ns = 0;
     SET_TIMESTAMP(compute_end_ns);
@@ -729,15 +680,6 @@ TRITONBACKEND_ModelInstanceExecute(
         responses, request_count,
         model_state->SupportsFirstDimBatching(&supports_first_dim_batching));
 
-//   std::vector<int64_t> tensor_shape;
-//   RESPOND_ALL_AND_SET_NULL_IF_ERROR(
-//       responses, request_count, model_state->TensorShape(tensor_shape));
-
-    const char *output_buffer = reinterpret_cast<const char *>(output_data.data());
-
-    std::vector<int64_t> output_tensor_shape;
-    output_tensor_shape.push_back(static_cast<int64_t>(output_data.size()));
-
     // Because the output tensor values are concatenated into a single
     // contiguous 'output_buffer', the backend must "scatter" them out
     // to the individual response output tensors.  The backend utilities
@@ -745,19 +687,82 @@ TRITONBACKEND_ModelInstanceExecute(
     // BackendOutputResponder does NOT support TRITONSERVER_TYPE_BYTES
     // data type.
 
-    // The 'responders's ProcessTensor function will copy the portion of
-    // 'output_buffer' corresponding to each request's output into the
-    // response for that request.
-
+    // Initialize the responder
     BackendOutputResponder responder(
         requests, request_count, &responses, model_state->TritonMemoryManager(),
         supports_first_dim_batching, false /* pinned_enabled */,
         nullptr /* stream*/);
 
-    responder.ProcessTensor(
-        model_state->OutputTensorName().c_str(), model_state->OutputTensorDataType(),
-        output_tensor_shape, output_buffer, output_buffer_memory_type,
-        output_buffer_memory_type_id);
+    // The 'responders's ProcessTensor function will copy the portion of
+    // 'output_buffer' corresponding to each request's output into the
+    // response for that request.
+
+    // Process the outputs
+    {
+        // --------------- Process 'chi2' ---------------
+        float chi2 = result.chi2;
+        std::vector<int64_t> chi2_shape = {1};
+        const char* chi2_buffer = reinterpret_cast<const char*>(&chi2);
+        responder.ProcessTensor(
+            "chi2",
+            TRITONSERVER_TYPE_FP32,
+            chi2_shape,
+            chi2_buffer,
+            TRITONSERVER_MEMORY_CPU /* memory_type */,
+            0 /* memory_type_id */);
+
+        // --------------- Process 'ndf' ---------------
+        float ndf = result.ndf;
+        std::vector<int64_t> ndf_shape = {1};
+        const char* ndf_buffer = reinterpret_cast<const char*>(&ndf);
+        responder.ProcessTensor(
+            "ndf",
+            TRITONSERVER_TYPE_FP32,
+            ndf_shape,
+            ndf_buffer,
+            TRITONSERVER_MEMORY_CPU /* memory_type */,
+            0 /* memory_type_id */);
+
+        // --------------- Process 'local_positions' ---------------
+        size_t num_positions = result.local_positions.size();
+        std::vector<int64_t> local_positions_shape = {static_cast<int64_t>(num_positions), 2};
+
+        std::vector<float> local_positions_buffer;
+        local_positions_buffer.reserve(num_positions * 2);
+        for (const auto& pos : result.local_positions) {
+            local_positions_buffer.push_back(pos[0]);
+            local_positions_buffer.push_back(pos[1]);
+        }
+        const char* local_positions_data = reinterpret_cast<const char*>(local_positions_buffer.data());
+        responder.ProcessTensor(
+            "local_positions",
+            TRITONSERVER_TYPE_FP32,
+            local_positions_shape,
+            local_positions_data,
+            TRITONSERVER_MEMORY_CPU /* memory_type */,
+            0 /* memory_type_id */);
+
+        // --------------- Process 'covariances' ---------------
+        size_t num_covariances = result.covariances.size();
+        std::vector<int64_t> covariances_shape = {static_cast<int64_t>(num_covariances), 2, 2};
+
+        std::vector<float> covariances_buffer;
+        covariances_buffer.reserve(num_covariances * 4);
+        for (const auto& cov : result.covariances) {
+            covariances_buffer.push_back(cov[0]); // c00
+            covariances_buffer.push_back(cov[1]); // c01
+            covariances_buffer.push_back(cov[2]); // c10
+            covariances_buffer.push_back(cov[3]); // c11
+        }
+        const char* covariances_data = reinterpret_cast<const char*>(covariances_buffer.data());
+        responder.ProcessTensor(
+            "covariances",
+            TRITONSERVER_TYPE_FP32,
+            covariances_shape,
+            covariances_data,
+            TRITONSERVER_MEMORY_CPU /* memory_type */,
+            0 /* memory_type_id */);
+    }
 
     // Finalize the responder. If 'true' is returned, the output
     // tensors' data will not be valid until the backend synchronizes
