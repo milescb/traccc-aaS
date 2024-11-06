@@ -24,10 +24,10 @@ git clone --recurse-submodules git@github.com:milescb/traccc-aaS.git
 
 ### Docker
 
-A docker built for the triton server can be found at `docexoty/tritonserver:latest`. To run this do
+A docker built for the triton server can be found at `docker.io/milescb/tritonserver:latest`. To run this do
 
 ```
-shifter --module=gpu --image=docexoty/tritonserver:latest
+shifter --module=gpu --image=milescb/tritonserver:latest
 ```
 
 or use your favorite docker application and mount the appropriate directories. 
