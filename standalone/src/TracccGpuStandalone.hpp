@@ -30,6 +30,8 @@
 
 // VecMem include(s).
 #include <vecmem/containers/vector.hpp>
+#include <vecmem/containers/jagged_vector.hpp>
+#include <vecmem/containers/jagged_device_vector.hpp>
 #include <vecmem/memory/binary_page_memory_resource.hpp>
 #include <vecmem/memory/cuda/device_memory_resource.hpp>
 #include <vecmem/memory/memory_resource.hpp>
@@ -200,15 +202,12 @@ using host_fitting_algorithm = traccc::fitting_algorithm<
 using device_fitting_algorithm = traccc::cuda::fitting_algorithm<
     traccc::kalman_fitter<stepper_type, device_navigator_type>>;
 
-using output_type = traccc::host_container<traccc::fitting_result<detray::cmath<float> >, 
-                        traccc::track_state<detray::cmath<float> > >;
-
 struct TrackFittingResult
 {
-    float chi2;
-    float ndf;
-    std::vector<std::array<float, 2>> local_positions;
-    std::vector<std::array<float, 4>> covariances;
+    std::vector<float> chi2;
+    std::vector<float> ndf;
+    std::vector<std::vector<std::array<float, 2>>> local_positions;
+    std::vector<std::vector<std::array<float, 2>>> variances;
 };
 
 class TracccGpuStandalone
@@ -290,12 +289,6 @@ private:
     device_finding_algorithm m_finding;
     /// Track fitting algorithm
     device_fitting_algorithm m_fitting;
-
-    // copying to cpu
-    // traccc::device::container_d2h_copy_alg<
-    //     traccc::track_candidate_container_types>
-    //     m_copy_track_candidates;
-    traccc::device::container_d2h_copy_alg<traccc::track_state_container_types> m_copy_track_states;
 
 public:
     TracccGpuStandalone(int deviceID = 0) :
@@ -442,75 +435,33 @@ TrackFittingResult TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> c
     const device_fitting_algorithm::output_type track_states = m_fitting(
         m_device_detector_view, m_field, track_candidates);
 
-    // // // Copy a limited amount of result data back to the host.
-    // device_fitting_algorithm::output_type result{&m_host_mr};
-    // m_copy(track_states.headers, result)->wait();
-
-    // return result;
-
     //
-    // ----------------- Print Statistics -----------------
+    // ----------------- Return fitted tracks -----------------
     // 
-    // // copy buffer to host
-    // traccc::measurement_collection_types::host measurements_per_event_cuda;
-    // traccc::spacepoint_collection_types::host spacepoints_per_event_cuda;
-    // traccc::seed_collection_types::host seeds_cuda;
-    // traccc::bound_track_parameters_collection_types::host params_cuda;
 
-    // m_copy(measurements, measurements_per_event_cuda)->wait();
-    // m_copy(spacepoints, spacepoints_per_event_cuda)->wait();
-    // m_copy(seeds, seeds_cuda)->wait();
-    // m_copy(track_params, params_cuda)->wait();
-    // auto track_candidates_cuda =
-    //     m_copy_track_candidates(track_candidates);
+    // create output type
     TrackFittingResult result;
-    auto track_states_host = m_copy_track_states(track_states);
-    const auto& headers = track_states_host.get_headers();
-    const auto& items = track_states_host.get_items();
+            
+    // for now, only copy headers back
+    vecmem::vector<traccc::fitting_result<detray::cmath<float> > > headers(&m_host_mr);
+    m_copy(track_states.headers, headers)->wait();
 
     std::cout << "Number of headers: " << headers.size() << std::endl;
 
     if (!headers.empty()) 
     {
-        result.chi2 = headers[0].chi2;
-        result.ndf = headers[0].ndf;
-    }
+        result.chi2.reserve(headers.size());
+        result.ndf.reserve(headers.size());
+        result.local_positions.reserve(headers.size());
+        result.variances.reserve(headers.size());
 
-    std::cout << "Number of tracks: " << items.size() << std::endl;
-
-    for (size_t i = 0; i < items.size(); ++i) {
-        const auto& track = items[i];
-        std::cout << "Track " << i << " has " << track.size() << " states." << std::endl;
-
-        for (size_t j = 0; j < track.size(); ++j) {
-            const auto& state = track[j];
-            // const auto& measurement = state.get_measurement();
-            auto local_pos = state.measurement_local<2>();
-            auto covariance = state.measurement_covariance<2>();
-
-            // Correct accessing of local_pos elements
-            float x = local_pos[0][0];
-            float y = local_pos[0][1];
-            result.local_positions.push_back({x, y});
-
-            // Correct accessing of covariance elements
-            float c00 = covariance[0][0];
-            float c01 = covariance[0][1];
-            float c10 = covariance[1][0];
-            float c11 = covariance[1][1];
-            result.covariances.push_back({c00, c01, c10, c11});
+        for (size_t i = 0; i < headers.size(); ++i) 
+        {
+            const auto& header = headers[i];
+            result.chi2.push_back(header.chi2);
+            result.ndf.push_back(header.ndf);
         }
     }
-
-    // // print results
-    // std::cout << " " << std::endl;
-    // std::cout << "==> Statistics ... " << std::endl;
-    // std::cout << " - number of measurements created " << measurements_per_event_cuda.size() << std::endl;
-    // std::cout << " - number of spacepoints created " << spacepoints_per_event_cuda.size() << std::endl;
-    // std::cout << " - number of seeds created " << seeds_cuda.size() << std::endl;
-    // std::cout << " - number of track candidates created " << track_candidates_cuda.size() << std::endl;
-    std::cout << " - number of fitted tracks created " << track_states_host.size() << std::endl;
-    std::cout << " done! " << std::endl;
 
     return result;
 }
