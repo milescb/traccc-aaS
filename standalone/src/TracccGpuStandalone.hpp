@@ -30,6 +30,8 @@
 
 // VecMem include(s).
 #include <vecmem/containers/vector.hpp>
+#include <vecmem/containers/jagged_vector.hpp>
+#include <vecmem/containers/jagged_device_vector.hpp>
 #include <vecmem/memory/binary_page_memory_resource.hpp>
 #include <vecmem/memory/cuda/device_memory_resource.hpp>
 #include <vecmem/memory/memory_resource.hpp>
@@ -200,6 +202,14 @@ using host_fitting_algorithm = traccc::fitting_algorithm<
 using device_fitting_algorithm = traccc::cuda::fitting_algorithm<
     traccc::kalman_fitter<stepper_type, device_navigator_type>>;
 
+struct TrackFittingResult
+{
+    std::vector<float> chi2;
+    std::vector<float> ndf;
+    std::vector<std::vector<std::array<float, 2>>> local_positions;
+    std::vector<std::vector<std::array<float, 2>>> variances;
+};
+
 class TracccGpuStandalone
 {
 private:
@@ -280,13 +290,6 @@ private:
     /// Track fitting algorithm
     device_fitting_algorithm m_fitting;
 
-    // copying to cpu
-    traccc::device::container_d2h_copy_alg<
-        traccc::track_candidate_container_types>
-        m_copy_track_candidates;
-    traccc::device::container_d2h_copy_alg<traccc::track_state_container_types>
-        m_copy_track_states;
-
 public:
     TracccGpuStandalone(int deviceID = 0) :
         m_device_id(deviceID), 
@@ -314,7 +317,6 @@ public:
         m_track_parameter_estimation(m_mr, m_copy, m_stream),
         m_finding(m_finding_config, m_mr, m_copy, m_stream),
         m_fitting(m_fitting_config, m_mr, m_copy, m_stream),
-        m_copy_track_candidates(m_mr, m_copy),
         m_copy_track_states(m_mr, m_copy)
     {
         // Tell the user what device is being used.
@@ -333,11 +335,12 @@ public:
     ~TracccGpuStandalone() = default;
 
     void initialize();
-    void run(std::vector<traccc::io::csv::cell> cells);
+    TrackFittingResult run(std::vector<traccc::io::csv::cell> cells);
     std::vector<traccc::io::csv::cell> read_csv(const std::string &filename);
     std::vector<std::vector<double>> read_from_csv(const std::string &filename);
     std::vector<traccc::io::csv::cell> 
-        read_from_array(const std::vector<std::vector<double>> &data);
+        read_from_array(const std::vector<std::uint64_t> &geometry_ids,
+                            const std::vector<std::vector<double>> &data);
 };
 
 void TracccGpuStandalone::initialize()
@@ -375,7 +378,7 @@ void TracccGpuStandalone::initialize()
     return;
 }
 
-void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
+TrackFittingResult TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
 {
     traccc::io::cell_reader_output read_out(m_mr.host);
 
@@ -432,40 +435,35 @@ void TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> cells)
     const device_fitting_algorithm::output_type track_states = m_fitting(
         m_device_detector_view, m_field, track_candidates);
 
-    // // Copy a limited amount of result data back to the host.
-    // output_type result{&m_host_mr};
-    // m_copy(track_states.headers, result)->wait();
-    // return result;
-
     //
-    // ----------------- Print Statistics -----------------
+    // ----------------- Return fitted tracks -----------------
     // 
-    // // copy buffer to host
-    // traccc::measurement_collection_types::host measurements_per_event_cuda;
-    // traccc::spacepoint_collection_types::host spacepoints_per_event_cuda;
-    // traccc::seed_collection_types::host seeds_cuda;
-    // traccc::bound_track_parameters_collection_types::host params_cuda;
 
-    // m_copy(measurements, measurements_per_event_cuda)->wait();
-    // m_copy(spacepoints, spacepoints_per_event_cuda)->wait();
-    // m_copy(seeds, seeds_cuda)->wait();
-    // m_copy(track_params, params_cuda)->wait();
-    // auto track_candidates_cuda =
-    //     m_copy_track_candidates(track_candidates);
-    // auto track_states_cuda = m_copy_track_states(track_states);
-    // m_stream.synchronize();
+    // create output type
+    TrackFittingResult result;
+            
+    // for now, only copy headers back
+    vecmem::vector<traccc::fitting_result<detray::cmath<float> > > headers(&m_host_mr);
+    m_copy(track_states.headers, headers)->wait();
 
-    // // print results
-    // std::cout << " " << std::endl;
-    // std::cout << "==> Statistics ... " << std::endl;
-    // std::cout << " - number of measurements created " << measurements_per_event_cuda.size() << std::endl;
-    // std::cout << " - number of spacepoints created " << spacepoints_per_event_cuda.size() << std::endl;
-    // std::cout << " - number of seeds created " << seeds_cuda.size() << std::endl;
-    // std::cout << " - number of track candidates created " << track_candidates_cuda.size() << std::endl;
-    // std::cout << " - number of fitted tracks created " << track_states_cuda.size() << std::endl;
-    std::cout << " done! " << std::endl;
+    std::cout << "Number of headers: " << headers.size() << std::endl;
 
-    return;
+    if (!headers.empty()) 
+    {
+        result.chi2.reserve(headers.size());
+        result.ndf.reserve(headers.size());
+        result.local_positions.reserve(headers.size());
+        result.variances.reserve(headers.size());
+
+        for (size_t i = 0; i < headers.size(); ++i) 
+        {
+            const auto& header = headers[i];
+            result.chi2.push_back(header.chi2);
+            result.ndf.push_back(header.ndf);
+        }
+    }
+
+    return result;
 }
 
 // deal with input data
@@ -488,22 +486,39 @@ std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_csv(const std::stri
     return cells;
 }
 
-std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const std::vector<std::vector<double>> &data)
+std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(const std::vector<std::uint64_t> &geometry_ids,
+                                                                            const std::vector<std::vector<double>> &data)
 {
     std::vector<traccc::io::csv::cell> cells;
 
-    for (const auto &row : data)
+    if (geometry_ids.size() != data.size())
     {
-        if (row.size() != 6)
-            continue; // ensure each row contains exactly 6 elements
+        throw std::runtime_error("Number of geometry IDs and data rows do not match.");
+    }
+
+    for (size_t i = 0; i < data.size(); ++i) 
+    {
+        const auto& row = data[i];
+        if (row.size() != 5)
+            continue; 
+
         traccc::io::csv::cell iocell;
-        // FIXME needs to decode to the correct type
-        iocell.geometry_id = static_cast<std::uint64_t>(row[0]);
-        iocell.hit_id = static_cast<int>(row[1]);
-        iocell.channel0 = static_cast<int>(row[2]);
-        iocell.channel1 = static_cast<int>(row[3]);
-        iocell.timestamp = static_cast<int>(row[4]);
-        iocell.value = row[5];
+
+        if (i < geometry_ids.size()) 
+        {
+            iocell.geometry_id = geometry_ids[i];
+        } 
+        else 
+        {
+            continue;
+        }
+
+        iocell.hit_id = static_cast<int>(row[0]);
+        iocell.channel0 = static_cast<int>(row[1]);
+        iocell.channel1 = static_cast<int>(row[2]);
+        iocell.timestamp = static_cast<int>(row[3]);
+        iocell.value = row[4];
+
         cells.push_back(iocell);
     }
 

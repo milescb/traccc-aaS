@@ -5,6 +5,10 @@ import numpy as np
 import pandas as pd
 import tritonclient.http as httpclient
 
+import matplotlib.pyplot as plt
+import mplhep
+plt.style.use(mplhep.style.ROOT)
+
 def main():
     # For the HTTP client, need to specify large enough concurrency to
     # issue all the inference requests to the server in parallel. For
@@ -21,20 +25,71 @@ def main():
     print("\n=========")
     async_requests = []
 
-    # input0_data = pd.read_csv(FLAGS.filename).to_numpy(dtype=np.float64)
-    # make some dummy data
-    input0_data = np.zeros((6, 6), dtype=np.float64)
-    print("Sending request to batching model: input = {}".format(input0_data))
-    inputs = [httpclient.InferInput("FEATURES", input0_data.shape, "FP64")]
+    input_data = pd.read_csv(FLAGS.filename)
+    input0_data = input_data['geometry_id'].to_numpy(dtype=np.uint64)
+    input1_data = input_data.drop('geometry_id', axis=1).to_numpy(dtype=np.float64)
+    inputs = [httpclient.InferInput("GEOMETRY_ID", input0_data.shape, "UINT64"),
+              httpclient.InferInput("FEATURES", input1_data.shape, "FP64")]
     inputs[0].set_data_from_numpy(input0_data)
+    inputs[1].set_data_from_numpy(input1_data)
     async_requests.append(triton_client.async_infer(f"traccc-{FLAGS.architecture}", inputs))
 
-    for async_request in async_requests:
-        # Get the result from the initiated asynchronous inference
-        # request. This call will block till the server responds.
-        result = async_request.get_result()
-        print("Response: {}".format(result.get_response()))
-        print("OUTPUT = {}".format(result.as_numpy("LABELS")))
+    # Define the outputs to retrieve
+    output_names = ["chi2", "ndf", "local_positions", "local_positions_lengths", "variances"]
+    outputs = [httpclient.InferRequestedOutput(name) for name in output_names]
+
+    # Send the inference request
+    async_request = triton_client.async_infer(
+        model_name=f"traccc-{FLAGS.architecture}",
+        inputs=inputs,
+        outputs=outputs
+    )
+
+    # Collect the result
+    result = async_request.get_result()
+
+    # Retrieve and process outputs
+    chi2 = result.as_numpy("chi2")  # Should be shape (1,)
+    ndf = result.as_numpy("ndf")    # Should be shape (1,)
+    local_positions_buffer = result.as_numpy("local_positions")  # Shape (N, 2)
+    local_positions_lengths = result.as_numpy("local_positions_lengths")  # Shape (N,)
+    variances_buffer = result.as_numpy("variances")          # Shape (N, 2)
+    
+    print("local_positions_buffer:", local_positions_buffer)
+    print("local_positions_buffer shape:", local_positions_buffer.shape)
+    print("local_positions_lengths:", local_positions_lengths)
+    print("local_positions_lengths shape:", local_positions_lengths.shape)
+    print("variances_buffer:", variances_buffer)
+    print("variances_buffer shape:", variances_buffer.shape)
+    
+    idx = 0
+    reconstructed_positions = []
+    reconstructed_variances = []
+    # position and variance lengths are the same by construction
+    for length in local_positions_lengths:
+        track_positions = []
+        track_variances = []
+        for _ in range(length):
+            pos = local_positions_buffer[idx]
+            track_positions.append(pos)
+            var = variances_buffer[idx]
+            track_variances.append(var)
+            idx += 1
+        reconstructed_positions.append(track_positions)
+        reconstructed_variances.append(track_variances)
+
+    # Print the outputs
+    print("chi2:", chi2)
+    print("chi2 shape:", chi2.shape)
+    print("ndf:", ndf)
+    print("reconstructed_positions:", reconstructed_positions)
+    print("reconstructed_variances:", reconstructed_variances)
+    
+    plt.figure(figsize=(6,6))
+    plt.hist(chi2/ndf, bins=25, range=(0, 5))
+    plt.xlabel(r"$\chi^2/ndf$", loc="right")
+    plt.ylabel("Fitted Track Results", loc="top")
+    plt.savefig("plots/chi2.png", bbox_inches="tight", dpi=300)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

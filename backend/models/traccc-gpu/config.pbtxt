@@ -1,24 +1,48 @@
 backend: "traccc"
 max_batch_size: 0
 input [
+   {
+    name: "GEOMETRY_ID"
+    data_type: TYPE_UINT64
+    dims: [ -1 ]
+  },
   {
     name: "FEATURES"
     data_type: TYPE_FP64
-    dims: [ -1, 6 ]
+    dims: [ -1, 5 ]
   }
 ]
 output [
   {
-    name: "LABELS"
-    data_type: TYPE_INT64
-    dims: [ 1 ]
+    name: "chi2"
+    data_type: TYPE_FP32
+    dims: [-1]
+  },
+  {
+    name: "ndf"
+    data_type: TYPE_FP32
+    dims: [-1]
+  },
+  {
+    name: "local_positions"
+    data_type: TYPE_FP32
+    dims: [-1, 2]
+  },
+  {
+    name: "local_positions_lengths"
+    data_type: TYPE_INT32
+    dims: [-1]
+  },
+  {
+    name: "variances"
+    data_type: TYPE_FP32
+    dims: [-1, 2]
   }
 ]
 instance_group [
   {
     count: 1
-    kind: KIND_GPU
-    gpus: [ 0 ]
+    kind: KIND_CPU
   }
 ]
 
