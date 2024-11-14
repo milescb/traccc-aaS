@@ -14,7 +14,7 @@ def main():
     # issue all the inference requests to the server in parallel. For
     # this example we want to be able to send 2 requests concurrently.
     try:
-        concurrent_request_count = 2
+        concurrent_request_count = 1
         triton_client = httpclient.InferenceServerClient(
             url=FLAGS.url, concurrency=concurrent_request_count, ssl=False
         )
@@ -22,31 +22,29 @@ def main():
         print("channel creation failed: " + str(e))
         sys.exit(1)
 
-    print("\n=========")
-    async_requests = []
-
+    # Read input data
     input_data = pd.read_csv(FLAGS.filename)
     input0_data = input_data['geometry_id'].to_numpy(dtype=np.uint64)
     input1_data = input_data.drop('geometry_id', axis=1).to_numpy(dtype=np.float64)
-    inputs = [httpclient.InferInput("GEOMETRY_ID", input0_data.shape, "UINT64"),
-              httpclient.InferInput("FEATURES", input1_data.shape, "FP64")]
+
+    # Prepare inputs
+    inputs = [
+        httpclient.InferInput("GEOMETRY_ID", input0_data.shape, "UINT64"),
+        httpclient.InferInput("FEATURES", input1_data.shape, "FP64")
+    ]
     inputs[0].set_data_from_numpy(input0_data)
     inputs[1].set_data_from_numpy(input1_data)
-    async_requests.append(triton_client.async_infer(f"traccc-{FLAGS.architecture}", inputs))
 
-    # Define the outputs to retrieve
+    # Specify outputs
     output_names = ["chi2", "ndf", "local_positions", "local_positions_lengths", "variances"]
     outputs = [httpclient.InferRequestedOutput(name) for name in output_names]
 
-    # Send the inference request
-    async_request = triton_client.async_infer(
-        model_name=f"traccc-{FLAGS.architecture}",
+    # Send inference request synchronously
+    result = triton_client.infer(
+        model_name="traccc-gpu",
         inputs=inputs,
         outputs=outputs
     )
-
-    # Collect the result
-    result = async_request.get_result()
 
     # Retrieve and process outputs
     chi2 = result.as_numpy("chi2")  # Should be shape (1,)
