@@ -316,8 +316,7 @@ public:
                     m_mr, m_copy, m_stream),
         m_track_parameter_estimation(m_mr, m_copy, m_stream),
         m_finding(m_finding_config, m_mr, m_copy, m_stream),
-        m_fitting(m_fitting_config, m_mr, m_copy, m_stream),
-        m_copy_track_states(m_mr, m_copy)
+        m_fitting(m_fitting_config, m_mr, m_copy, m_stream)
     {
         // Tell the user what device is being used.
         int device = 0;
