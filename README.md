@@ -32,6 +32,14 @@ shifter --module=gpu --image=milescb/tritonserver:latest
 
 or use your favorite docker application and mount the appropriate directories. 
 
+Finally, an image has been built with the custom backend pre-installed at `docker.io/milescb/traccc-aas:latest`. To run this, open the image, then run the server with
+
+```
+tritonserver --model-repository=$MODEL_REPO
+```
+
+This corresponds to the `Dockerfile` in this repository. 
+
 ### Shared Library 
 
 To run out of the box, an installation of `traccc` and the the backend can be found at `/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_09152024/install`. To set up the environment, run the docker then set the following environment variables
