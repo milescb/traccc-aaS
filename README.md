@@ -82,3 +82,28 @@ Then, the server can be launched as above:
 ```
 tritonserver --model-repository=../../models
 ```
+
+## Deploy on K8s cluster using SuperSONIC
+
+For server-side large-scale deployment. We are using [SuperSONIC](https://github.com/fastmachinelearning/SuperSONIC) 
+framework
+
+
+### To deploy the server on NRP Nautilus
+```
+source deploy-nautilus-atlas.sh
+```
+
+The settings are defined in `helm/values-nautilus-atlas.yaml` files. 
+You can update the setting simply by sourcing the deployment script again. 
+ 
+You can find the server URL in the same configs. It will take a few seconds to start a server, depending on the specs of the GPUs requested.
+
+
+### !!! Important !!!
+Make sure to `uninstall` ONCE the server is not needed anymore. 
+```
+helm uninstall super-sonic -n atlas-sonic
+```
+
+Make sure to read the [Policies](https://docs.nationalresearchplatform.org/userdocs/start/policies/) before using Nautilus. 
