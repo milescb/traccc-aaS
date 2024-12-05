@@ -85,11 +85,12 @@ tritonserver --model-repository=../../models
 
 ## Deploy on K8s cluster using SuperSONIC
 
-For server-side large-scale deployment. We are using [SuperSONIC](https://github.com/fastmachinelearning/SuperSONIC) 
-framework
+For server-side large-scale deployment we are using the [SuperSONIC](https://github.com/fastmachinelearning/SuperSONIC) 
+framework. 
 
 
 ### To deploy the server on NRP Nautilus
+
 ```
 source deploy-nautilus-atlas.sh
 ```
@@ -99,9 +100,53 @@ You can update the setting simply by sourcing the deployment script again.
  
 You can find the server URL in the same configs. It will take a few seconds to start a server, depending on the specs of the GPUs requested.
 
+### Running the client
+
+In order for the client to interface with the server, the location of the server needs to be specified. First, ensure the server is running
+
+```
+kubectl get pods -n atlas-sonic
+```
+which has output something like:
+
+```
+NAME                            READY   STATUS    RESTARTS   AGE
+envoy-atlas-7f6d99df88-667jd    1/1     Running   0          86m
+triton-atlas-594f595dbf-n4sk7   1/1     Running   0          86m
+```
+
+Then, forward the appropriate port:
+
+```
+kubectl port-forward service/triton-atlas 8000:8000 -n atlas-sonic
+```
+
+You can then check everything is healthy with
+
+```
+curl -v localhost:8000/v2/health/ready
+```
+
+which should produce the output
+
+```
+< HTTP/1.1 200 OK
+< Content-Length: 0
+< Content-Type: text/plain
+```
+
+Then, the client can be run as before. To see what's going on on the server, run
+
+```
+kubectl logs triton-atlas-594f595dbf-n4sk7
+```
+
+where `triton-atlas-594f595dbf-n4sk7` is the name of the server found when running the `get pods` command above. 
 
 ### !!! Important !!!
-Make sure to `uninstall` ONCE the server is not needed anymore. 
+
+Make sure to `uninstall` once the server is not needed anymore. 
+
 ```
 helm uninstall super-sonic -n atlas-sonic
 ```
