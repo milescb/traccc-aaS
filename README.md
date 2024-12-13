@@ -115,19 +115,13 @@ envoy-atlas-7f6d99df88-667jd    1/1     Running   0          86m
 triton-atlas-594f595dbf-n4sk7   1/1     Running   0          86m
 ```
 
-Then, forward the appropriate port:
-
-```
-kubectl port-forward service/triton-atlas 8000:8000 -n atlas-sonic
-```
-
 You can then check everything is healthy with
 
 ```
-curl -v localhost:8000/v2/health/ready
+curl -kv https://atlas.nrp-nautilus.io/v2/health/ready
 ```
 
-which should produce the output
+which should produce somewhere in the output the lines:
 
 ```
 < HTTP/1.1 200 OK
@@ -135,7 +129,13 @@ which should produce the output
 < Content-Type: text/plain
 ```
 
-Then, the client can be run as before. To see what's going on on the server, run
+Then, the client can be run with, for instance:
+
+```
+python TracccTritonClient.py -u atlas.nrp-nautilus.io --ssl
+```
+
+To see what's going on from the server side, run
 
 ```
 kubectl logs triton-atlas-594f595dbf-n4sk7

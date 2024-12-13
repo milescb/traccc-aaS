@@ -16,7 +16,7 @@ def main():
     try:
         concurrent_request_count = 1
         triton_client = httpclient.InferenceServerClient(
-            url=FLAGS.url, concurrency=concurrent_request_count, ssl=False
+            url=FLAGS.url, concurrency=concurrent_request_count, ssl=FLAGS.ssl
         )
     except Exception as e:
         print("channel creation failed: " + str(e))
@@ -98,6 +98,13 @@ if __name__ == "__main__":
         required=False,
         default="localhost:8000",
         help="Inference server URL. Default is localhost:8000.",
+    )
+    parser.add_argument(
+        "--ssl",
+        action="store_true",
+        required=False,
+        default=False,
+        help="Enable encrypted link to the server.",
     )
     parser.add_argument(
         "-f",
