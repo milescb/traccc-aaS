@@ -36,4 +36,13 @@ RUN cd traccc-aaS/backend/traccc-gpu && mkdir build install && cd build && \
     cmake -B . -S ../ -DCMAKE_INSTALL_PREFIX=../install && \
     cmake --build . --target install -- -j20
 
+RUN cp -r /traccc-aaS/traccc-aaS/backend/models /traccc-aaS/traccc-aaS/backend/models_multi_gpu 
+RUN sed -i "/gpus:/c\    gpus: [ 0, 1, 2, 3 ]" /traccc-aaS/traccc-aaS/backend/models_multi_gpu/traccc-gpu/config.pbtxt
+
 ENV MODEL_REPO=/traccc-aaS/traccc-aaS/backend/models
+ENV MODEL_REPO_MULTI_GPU=/traccc-aaS/traccc-aaS/backend/models_multi_gpu
+
+# make multiple versions with up to 8 model instances per GPU
+RUN for i in {1..8}; do \
+        cp -r /traccc-aaS/traccc-aaS/backend/models /traccc-aaS/traccc-aaS/backend/nmodels_$i \
+        && sed -i "s/count: 1/count: $i/" /traccc-aaS/traccc-aaS/backend/nmodels_$i/traccc-gpu/config.pbtxt; done
