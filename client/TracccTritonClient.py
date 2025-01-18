@@ -3,20 +3,22 @@ import sys
 
 import numpy as np
 import pandas as pd
-import tritonclient.http as httpclient
+# import tritonclient.http as httpclient
 
 import matplotlib.pyplot as plt
 import mplhep
 plt.style.use(mplhep.style.ROOT)
 
+import tritonclient.grpc as grpcclient
+
 def main():
-    # For the HTTP client, need to specify large enough concurrency to
+    # For the gRPC client, need to specify large enough concurrency to
     # issue all the inference requests to the server in parallel. For
     # this example we want to be able to send 2 requests concurrently.
     try:
         concurrent_request_count = 1
-        triton_client = httpclient.InferenceServerClient(
-            url=FLAGS.url, concurrency=concurrent_request_count, ssl=FLAGS.ssl
+        triton_client = grpcclient.InferenceServerClient(
+            url=FLAGS.url, ssl=FLAGS.ssl
         )
     except Exception as e:
         print("channel creation failed: " + str(e))
@@ -29,15 +31,15 @@ def main():
 
     # Prepare inputs
     inputs = [
-        httpclient.InferInput("GEOMETRY_ID", input0_data.shape, "UINT64"),
-        httpclient.InferInput("FEATURES", input1_data.shape, "FP64")
+        grpcclient.InferInput("GEOMETRY_ID", input0_data.shape, "UINT64"),
+        grpcclient.InferInput("FEATURES", input1_data.shape, "FP64")
     ]
     inputs[0].set_data_from_numpy(input0_data)
     inputs[1].set_data_from_numpy(input1_data)
 
     # Specify outputs
     output_names = ["chi2", "ndf", "local_positions", "local_positions_lengths", "variances"]
-    outputs = [httpclient.InferRequestedOutput(name) for name in output_names]
+    outputs = [grpcclient.InferRequestedOutput(name) for name in output_names]
 
     # Send inference request synchronously
     result = triton_client.infer(
@@ -96,8 +98,8 @@ if __name__ == "__main__":
         "--url",
         type=str,
         required=False,
-        default="localhost:8000",
-        help="Inference server URL. Default is localhost:8000.",
+        default="localhost:8001",
+        help="Inference server URL. Default is localhost:8001.",
     )
     parser.add_argument(
         "--ssl",
