@@ -115,7 +115,7 @@ envoy-atlas-7f6d99df88-667jd    1/1     Running   0          86m
 triton-atlas-594f595dbf-n4sk7   1/1     Running   0          86m
 ```
 
-You can then check everything is healthy with
+or, use the [k9s](https://k9scli.io) tool to manage your pods. You can then check everything is healthy with
 
 ```
 curl -kv https://atlas.nrp-nautilus.io/v2/health/ready
@@ -148,7 +148,7 @@ where `triton-atlas-594f595dbf-n4sk7` is the name of the server found when runni
 Make sure to `uninstall` once the server is not needed anymore. 
 
 ```
-helm uninstall super-sonic -n atlas-sonic
+helm uninstall atlas-sonic -n atlas-sonic
 ```
 
 Make sure to read the [Policies](https://docs.nationalresearchplatform.org/userdocs/start/policies/) before using Nautilus. 
