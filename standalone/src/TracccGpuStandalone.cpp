@@ -18,15 +18,16 @@ int main(int argc, char *argv[])
     TracccGpuStandalone standalone(deviceID);
     auto cells = standalone.read_csv(event_file);
 
-    std::vector<double> timeProcessOneEvent;
+    // std::vector<double> timeProcessOneEvent;
 
     TrackFittingResult result;
+    result = standalone.run(cells);
 
     // warm up
-    for (int i = 0; i < 1; i++)
-    {
-        result = standalone.run(cells);
-    }
+    // for (int i = 0; i < 1; i++)
+    // {
+    //     result = standalone.run(cells);
+    // }
 
     // for (int i = 0; i < 100; i++)
     // {
