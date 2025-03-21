@@ -11,7 +11,7 @@ include(FetchContent)
 include_directories(/usr/local/cuda/include/)
 
 # find required traccc packages
-find_package(actsvg REQUIRED)
+# find_package(actsvg REQUIRED)
 find_package(covfie REQUIRED)
 find_package(traccc REQUIRED)
 find_package(CUDAToolkit REQUIRED)
@@ -43,4 +43,4 @@ add_definitions(-DALGEBRA_PLUGINS_INCLUDE_ARRAY)
 target_link_libraries(TracccGpuStandalone PUBLIC 
     vecmem::core vecmem::cuda traccc::io traccc::performance
     traccc::core traccc::device_common traccc::cuda CUDA::cudart
-    traccc::options detray::utils detray::io detray::core)
+    traccc::options detray::io detray::core)

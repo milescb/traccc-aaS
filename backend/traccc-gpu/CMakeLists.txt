@@ -90,7 +90,6 @@ FetchContent_MakeAvailable(repo-common repo-core repo-backend)
 # 
 # Traccc dependencies
 #
-find_package(actsvg REQUIRED)
 find_package(covfie REQUIRED)
 find_package(traccc REQUIRED)
 
@@ -140,7 +139,6 @@ target_link_libraries(
     traccc::device_common 
     traccc::cuda
     traccc::options 
-    detray::utils 
     detray::io
 )
 
