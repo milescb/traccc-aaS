@@ -273,10 +273,10 @@ public:
 void TracccGpuStandalone::initialize()
 {
     // HACK: hard code location of detector and digitization file
-    m_detector_opts.detector_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data_new/geometries/odd/odd-detray_geometry_detray.json";
-    m_detector_opts.digitization_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data_new/geometries/odd/odd-digi-geometric-config.json";
-    m_detector_opts.grid_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data_new/geometries/odd/odd-detray_surface_grids_detray.json";
-    m_detector_opts.material_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data_new/geometries/odd/odd-detray_material_detray.json";
+    m_detector_opts.detector_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_geometry_detray.json";
+    m_detector_opts.digitization_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-digi-geometric-config.json";
+    m_detector_opts.grid_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_surface_grids_detray.json";
+    m_detector_opts.material_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_material_detray.json";
     m_detector_opts.use_detray_detector = true;
 
     // Read the detector description
