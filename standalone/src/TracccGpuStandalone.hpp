@@ -336,7 +336,6 @@ TrackFittingResult TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> c
     const traccc::cuda::track_params_estimation::output_type track_params =
         m_track_parameter_estimation(measurements, spacepoints,
                                     m_seeding(spacepoints), m_field_vec);
-
     //
     // ----------------- Finding and Fitting -----------------
     //
@@ -427,17 +426,25 @@ std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(
     for (size_t i = 0; i < data.size(); ++i) 
     {
         const auto& row = data[i];
-        if (row.size() != 6)
+        if (row.size() != 5)
             continue; 
 
         traccc::io::csv::cell iocell;
 
-        iocell.geometry_id = static_cast<int>(row[0]);
-        iocell.measurement_id = static_cast<int>(row[1]);
-        iocell.channel0 = static_cast<int>(row[2]);
-        iocell.channel1 = static_cast<int>(row[3]);
-        iocell.timestamp = static_cast<int>(row[4]);
-        iocell.value = row[5];
+        if (i < geometry_ids.size()) 
+        {
+            iocell.geometry_id = geometry_ids[i];
+        } 
+        else 
+        {
+            continue;
+        }
+
+        iocell.measurement_id = static_cast<int>(row[0]);
+        iocell.channel0 = static_cast<int>(row[1]);
+        iocell.channel1 = static_cast<int>(row[2]);
+        iocell.timestamp = static_cast<int>(row[3]);
+        iocell.value = row[4];
 
         cells.push_back(iocell);
     }
@@ -454,9 +461,6 @@ std::map<std::uint64_t, std::map<traccc::io::csv::cell, float, cell_order>>
 
     for (const auto &iocell : cells)
     {
-        traccc::io::csv::cell cell{iocell.geometry_id, iocell.measurement_id, 
-                                iocell.channel0, iocell.channel1, 
-                                iocell.timestamp, iocell.value};
         auto ret = cellMap[iocell.geometry_id].insert({iocell, iocell.value});
         if (ret.second == false) {
             cellMap[iocell.geometry_id].at(iocell) += iocell.value;
