@@ -1,50 +1,75 @@
-FROM docker.io/milescb/triton-server:latest
+# syntax=docker/dockerfile:experimental
 
-# install traccc
-WORKDIR /traccc
-# copy geometry files to container
-COPY odd_configuration ./odd/
-# build and install traccc
-RUN mkdir build install
-RUN git clone https://github.com/acts-project/traccc.git 
-RUN cd traccc && git checkout v0.20.0
-WORKDIR /traccc/build
-RUN cmake -DCMAKE_INSTALL_PREFIX=../install ../traccc \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DTRACCC_BUILD_CUDA=ON \
-        -DTRACCC_BUILD_EXAMPLES=ON \
-        -DTRACCC_USE_ROOT=FALSE 
-RUN cmake --build . --target install -- -j20
+FROM nvcr.io/nvidia/tritonserver:25.02-py3
+# nvcc version: 12.8 ## nvcc --version
 
-# add variables to environment
-ENV PATH=/traccc/install/bin:$PATH
-ENV LD_LIBRARY_PATH=/traccc/install/lib:$LD_LIBRARY_PATH
+LABEL description="Triton Server backend with other dependencies for traccc-as-a-Service"
+LABEL version="1.0"
 
-# install custom backend
-WORKDIR /traccc-aaS
-RUN git clone https://github.com/milescb/traccc-aaS.git
+# Install dependencies
+# Update the CUDA Linux GPG Repository Key
+RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/3bf863cc.pub
 
-# Replace hard-coded paths in TracccGpuStandalone.hpp with local paths in docker
-RUN sed -i 's|/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_geometry_detray.json|/traccc/odd/odd-detray_geometry_detray.json|g' \
-                /traccc-aaS/traccc-aaS/standalone/src/TracccGpuStandalone.hpp
-RUN sed -i 's|/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-digi-geometric-config.json|/traccc/odd/odd-digi-geometric-config.json|g' \
-                /traccc-aaS/traccc-aaS/standalone/src/TracccGpuStandalone.hpp
-RUN sed -i 's|/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_surface_grids_detray.json|/traccc/odd/odd-detray_surface_grids_detray.json|g' \
-                /traccc-aaS/traccc-aaS/standalone/src/TracccGpuStandalone.hpp
-RUN sed -i 's|/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_material_detray.json|/traccc/odd/odd-detray_material_detray.json|g' \
-                /traccc-aaS/traccc-aaS/standalone/src/TracccGpuStandalone.hpp
+RUN apt-get update -y && apt-get install -y \
+    build-essential curl git freeglut3-dev libfreetype6-dev libpcre3-dev\
+    libboost-dev libboost-filesystem-dev libboost-program-options-dev libboost-test-dev \
+    libtbb-dev ninja-build time tree \
+    python3 python3-dev python3-pip python3-numpy \
+    rsync zlib1g-dev ccache vim unzip libblas-dev liblapack-dev swig \
+    rapidjson-dev \
+    libexpat-dev libeigen3-dev libftgl-dev libgl2ps-dev libglew-dev libgsl-dev \
+    liblz4-dev liblzma-dev libx11-dev libxext-dev libxft-dev libxpm-dev libxerces-c-dev \
+    libzstd-dev ccache libb64-dev \
+    libsuitesparse-dev libhwloc-dev libsuperlu-dev \
+  && apt-get clean -y
 
-RUN cd traccc-aaS/backend/traccc-gpu && mkdir build install && cd build && \
-    cmake -B . -S ../ -DCMAKE_INSTALL_PREFIX=../install && \
-    cmake --build . --target install -- -j20
+RUN ln -s /usr/bin/python3 /usr/bin/python
+RUN pip3 install -U pandas matplotlib seaborn
 
-RUN cp -r /traccc-aaS/traccc-aaS/backend/models /traccc-aaS/traccc-aaS/backend/models_multi_gpu 
-RUN sed -i "/gpus:/c\    gpus: [ 0, 1, 2, 3 ]" /traccc-aaS/traccc-aaS/backend/models_multi_gpu/traccc-gpu/config.pbtxt
+# Environment variables
+ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/lib:/usr/local/lib"
+ENV GET="curl --location --silent --create-dirs"
+ENV UNPACK_TO_SRC="tar -xz --strip-components=1 --directory src"
+ENV PREFIX="/usr/local"
+ENV TORCH_CUDA_ARCH_LIST="80"
+ENV PYTHONNOUSERSITE=True
 
-ENV MODEL_REPO=/traccc-aaS/traccc-aaS/backend/models
-ENV MODEL_REPO_MULTI_GPU=/traccc-aaS/traccc-aaS/backend/models_multi_gpu
+# Install GCC 13.3.0
+RUN apt-get update -y && apt-get install -y software-properties-common \
+    && add-apt-repository -y ppa:ubuntu-toolchain-r/test \
+    && apt-get update -y \
+    && apt-get install -y gcc-13 g++-13 \
+    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
+    --slave /usr/bin/g++ g++ /usr/bin/g++-13 \
+    --slave /usr/bin/gcov gcov /usr/bin/gcov-13 \
+    && apt-get clean -y \
+    && gcc --version
 
-# make multiple versions with up to 8 model instances per GPU
-RUN for i in {1..8}; do \
-        cp -r /traccc-aaS/traccc-aaS/backend/models /traccc-aaS/traccc-aaS/backend/nmodels_$i \
-        && sed -i "s/count: 1/count: $i/" /traccc-aaS/traccc-aaS/backend/nmodels_$i/traccc-gpu/config.pbtxt; done
+# Manual builds for specific packages
+# Install CMake v3.29.4
+RUN cd /tmp && mkdir -p src \
+  && ${GET} https://github.com/Kitware/CMake/releases/download/v3.29.4/cmake-3.29.4-Linux-x86_64.tar.gz \
+    | ${UNPACK_TO_SRC} \
+  && rsync -ru src/ ${PREFIX} \
+  && cd /tmp && rm -rf /tmp/src
+
+# Install xxHash v0.7.3
+RUN cd /tmp && mkdir -p src \
+  && ${GET} https://github.com/Cyan4973/xxHash/archive/v0.8.2.tar.gz \
+    | ${UNPACK_TO_SRC} \
+  && cmake -B build -S src/cmake_unofficial -GNinja\
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=${PREFIX} \
+  && cmake --build build -- install -j20\
+  && cd /tmp && rm -rf src build
+
+RUN pip3 install pyyaml astunparse expecttest!=0.2.0 hypothesis numpy psutil pyyaml requests setuptools types-dataclasses \
+    typing-extensions>=4.8.0 sympy filelock networkx jinja2 fsspec lintrunner ninja packaging optree>=0.11.0 setuptools
+
+# install triton client
+RUN pip3 install tritonclient[all]
+
+# additional Python package needed for acorn
+RUN pip3 install git+https://github.com/LAL/trackml-library.git \
+pyyaml click pytest pytest-cov class-resolver scipy pandas matplotlib uproot tqdm ipykernel \
+atlasify networkx seaborn wandb mplhep

@@ -10,6 +10,19 @@ A minimal description of how to build a working version is detailed below. In ea
 
 ## Running out of the box
 
+The easiest way to run `traccc` as-a-Service is with our container. Pull the image at `docker.io/milescb/traccc-aas:v1.0_traccc0.20.0`, then run the image interactively. The server can be launched with:
+
+```
+tritonserver --model-repository=$MODEL_REPO
+```
+
+To test this with the client, open another window in the docker (using tmux, for instance), then run:
+
+```
+cd traccc-aas/client
+python TracccTritonClient.py
+```
+
 ### Get the code
 
 Simply clone the repository with 
@@ -20,25 +33,17 @@ git clone --recurse-submodules git@github.com:milescb/traccc-aaS.git
 
 ### Docker
 
-A docker built for the triton server can be found at `docker.io/milescb/triton-server:triton-server:25.02-py3_cuda12.6_gcc13.3`. To run this do
+The easiest way to build the custom backend is with the docker at `docker.io/milescb/triton-server:25.02-py3_gcc13.3`. Run this interactively with
 
 ```
-shifter --module=gpu --image=milescb/tritonserver:triton-server:25.02-py3_cuda12.6_gcc13.3
+shifter --module=gpu --image=milescb/tritonserver:triton-server:25.02-py3_gcc13.3
 ```
 
 or use your favorite docker application and mount the appropriate directories. 
 
-Finally, an image has been built with the custom backend pre-installed at `docker.io/milescb/traccc-aas:v1.1`. To run this, open the image, then run the server with
-
-```
-tritonserver --model-repository=$MODEL_REPO
-```
-
-This corresponds to the `Dockerfile` in this repository. 
-
 ### Shared Library 
 
-To run out of the box, an installation of `traccc` and the the backend can be found at `/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_09152024/install`. To set up the environment, run the docker then set the following environment variables
+To run out of the box at `nersc`, an installation of `traccc` and the the backend can be found at `/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_03202024_traccc_v0.20.0/install`. To set up the environment, run the docker then set the following environment variables
 
 ```
 export DATADIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/data_new
@@ -53,7 +58,7 @@ Then, the server can be launched with
 tritonserver --model-repository=$INSTALLDIR/models
 ```
 
-Once the server is launched, run the model via:
+Once the server is launched, run the model (on the same node to avoid networking problems) via:
 
 ```
 cd client && python TracccTritionClient.py 
@@ -73,7 +78,7 @@ cmake -B . -S ../ \
 cmake --build . --target install -- -j20
 ```
 
-Then, the server can be launched as above:
+The server can then be launched as above:
 
 ```
 tritonserver --model-repository=../../models
