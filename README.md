@@ -8,10 +8,6 @@ Main objective of this repo: run [traccc](https://github.com/acts-project/traccc
 
 A minimal description of how to build a working version is detailed below. In each subdirectory of this project, a README containing more information can be found. 
 
-## Previous work
-
-The beginnings of this work is based on a CPU version developed by Haoran Zhao. The original repo can be found [here](https://github.com/hrzhao76/traccc-aaS). This CPU version has been incorporated into other branches of this work such as `odd_traccc_v0.10.0` but is omitted here for clarity. 
-
 ## Running out of the box
 
 ### Get the code
@@ -24,10 +20,10 @@ git clone --recurse-submodules git@github.com:milescb/traccc-aaS.git
 
 ### Docker
 
-A docker built for the triton server can be found at `docker.io/milescb/triton-server:latest`. To run this do
+A docker built for the triton server can be found at `docker.io/milescb/triton-server:triton-server:25.02-py3_cuda12.6_gcc13.3`. To run this do
 
 ```
-shifter --module=gpu --image=milescb/tritonserver:latest
+shifter --module=gpu --image=milescb/tritonserver:triton-server:25.02-py3_cuda12.6_gcc13.3
 ```
 
 or use your favorite docker application and mount the appropriate directories. 
@@ -45,13 +41,13 @@ This corresponds to the `Dockerfile` in this repository.
 To run out of the box, an installation of `traccc` and the the backend can be found at `/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_09152024/install`. To set up the environment, run the docker then set the following environment variables
 
 ```
-export DATADIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/data
-export INSTALLDIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_09152024/install
+export DATADIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/data_new
+export INSTALLDIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_03202024_traccc_v0.20.0/install
 export PATH=$INSTALLDIR/bin:$PATH
 export LD_LIBRARY_PATH=$INSTALLDIR/lib:$LD_LIBRARY_PATH
 ```
 
-Then the server can be launched with 
+Then, the server can be launched with 
 
 ```
 tritonserver --model-repository=$INSTALLDIR/models
