@@ -46,7 +46,7 @@ or use your favorite docker application and mount the appropriate directories.
 To run out of the box at `nersc`, an installation of `traccc` and the the backend can be found at `/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_03202024_traccc_v0.20.0/install`. To set up the environment, run the docker then set the following environment variables
 
 ```
-export DATADIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/data_new
+export DATADIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/data
 export INSTALLDIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_03202024_traccc_v0.20.0/install
 export PATH=$INSTALLDIR/bin:$PATH
 export LD_LIBRARY_PATH=$INSTALLDIR/lib:$LD_LIBRARY_PATH
@@ -64,6 +64,20 @@ Once the server is launched, run the model (on the same node to avoid networking
 cd client && python TracccTritionClient.py 
 ```
 More info in the client directory. 
+
+### Building from source
+
+If you don't have access to `nersc`, you'll have to build `traccc` yourself. Follow the instructions on the [traccc page](https://github.com/acts-project/traccc/tree/main) to build or run this configure command:
+
+```
+cmake <path_to_cmake> \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DTRACCC_BUILD_CUDA=ON \
+    -DTRACCC_BUILD_EXAMPLES=ON \
+    -DTRACCC_USE_ROOT=FALSE \
+    -DCMAKE_INSTALL_PREFIX=$INSTALLDIR
+make -j20 install
+```
 
 ## Building the backend
 
