@@ -10,7 +10,7 @@ A minimal description of how to build a working version is detailed below. In ea
 
 ## Running out of the box
 
-The easiest way to run `traccc` as-a-Service is with our container. Pull the image at `docker.io/milescb/traccc-aas:v1.0_traccc0.21.0`, then run the image interactively. The server can be launched with:
+The easiest way to run `traccc` as-a-Service is with our container. Pull the image at `docker.io/milescb/traccc-aas:v1.1_traccc0.21.0`, then run the image interactively. The server can be launched with:
 
 ```
 tritonserver --model-repository=$MODEL_REPO
