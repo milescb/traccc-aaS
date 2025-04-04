@@ -7,7 +7,7 @@ COPY odd_configuration ./odd/
 # build and install traccc
 RUN mkdir build install
 RUN git clone https://github.com/acts-project/traccc.git 
-RUN cd traccc && git checkout v0.20.0
+RUN cd traccc && git checkout v0.21.0
 WORKDIR /traccc/build
 RUN cmake -DCMAKE_INSTALL_PREFIX=../install ../traccc \
         -DCMAKE_BUILD_TYPE=Release \
