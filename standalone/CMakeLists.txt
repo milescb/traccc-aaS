@@ -4,6 +4,9 @@ cmake_minimum_required(VERSION 3.22)
 project(TracccStandalone LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# debug flags
+set(CMAKE_CUDA_FLAGS_DEBUG "-G -g") 
+set(CMAKE_CXX_FLAGS_DEBUG "-g") 
 
 include(FetchContent)
 
@@ -32,7 +35,8 @@ foreach (_variableName ${_variableNames})
     endif()
 endforeach()
 
-add_executable(TracccGpuStandalone src/TracccGpuStandalone.cpp)
+add_executable(TracccGpuStandalone 
+    src/TracccGpuStandalone.cpp)
 
 target_include_directories(TracccGpuStandalone 
     PUBLIC src/${traccc_INCLUDE_DIR}
