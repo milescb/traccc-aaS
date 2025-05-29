@@ -134,11 +134,11 @@ private:
     /// Logger 
     std::unique_ptr<const traccc::Logger> logger;
     /// Host memory resource
-    vecmem::host_memory_resource m_host_mr;
+    vecmem::host_memory_resource *m_host_mr;
     /// CUDA stream to use
     traccc::cuda::stream m_stream;
     /// Device memory resource
-    vecmem::cuda::device_memory_resource m_device_mr;
+    vecmem::cuda::device_memory_resource *m_device_mr;
     /// Device caching memory resource
     std::unique_ptr<vecmem::binary_page_memory_resource> m_cached_device_mr;
     /// (Asynchronous) memory copy object
@@ -213,8 +213,8 @@ private:
         m_copy_track_states;
 
     // ambiguity resolution
-    traccc::greedy_ambiguity_resolution_algorithm::config_t m_resolution_config;
-    traccc::greedy_ambiguity_resolution_algorithm m_resolution_alg;
+    // traccc::greedy_ambiguity_resolution_algorithm::config_t m_resolution_config;
+    // traccc::greedy_ambiguity_resolution_algorithm m_resolution_alg;
 
     // Helper function to create and setup seedfinder_config
     static traccc::seedfinder_config create_and_setup_finder_config() {
@@ -242,79 +242,80 @@ private:
     }
 
 public:
-    TracccGpuStandalone(int deviceID = 0) :
-        m_device_id(deviceID), 
-        logger(traccc::getDefaultLogger("TracccGpuStandalone", traccc::Logging::Level::INFO)),
-        m_host_mr(),
-        m_stream(setCudaDeviceAndGetStream(deviceID)),
-        m_device_mr(deviceID),
-        m_cached_device_mr(
-            std::make_unique<vecmem::binary_page_memory_resource>(m_device_mr)),
-        m_copy(m_stream.cudaStream()),
-        m_mr{*m_cached_device_mr, &m_host_mr},
-        m_propagation_config(m_propagation_opts),
-        m_clustering_config{256, 16, 8, 256},
-        m_finder_config(create_and_setup_finder_config()), // Initialize m_finder_config using the helper
-        m_grid_config(m_finder_config), 
-        m_filter_config(), 
-        // Initialize m_finding_config with members in declaration order
-        m_finding_config{
-            .max_num_branches_per_seed = 3,                
-            .max_num_branches_per_surface = 5, 
-            .min_track_candidates_per_track = 3,
-            .max_track_candidates_per_track = 20,
-            .max_num_skipping_per_cand = 3,
-            .min_step_length_for_next_surface = 0.5f * detray::unit<float>::mm,
-            .max_step_counts_for_next_surface = 100,
-            .chi2_max = 10.f,
-            .propagation = { 
-                .navigation = { 
-                    .overstep_tolerance = -300.f * traccc::unit<float>::um
-                },
-                .stepping = {
-                    .min_stepsize = 1e-4f * traccc::unit<float>::mm,
-                    .rk_error_tol = 1e-4f * traccc::unit<float>::mm,
-                    .step_constraint = std::numeric_limits<float>::max(),
-                    .path_limit = 5.f * traccc::unit<float>::m,
-                    .max_rk_updates = 10000u,
-                    .use_mean_loss = true,
-                    .use_eloss_gradient = false,
-                    .use_field_gradient = false,
-                    .do_covariance_transport = true
+    TracccGpuStandalone( 
+        vecmem::host_memory_resource *host_mr,
+        vecmem::cuda::device_memory_resource *device_mr,
+        int deviceID = 0) :
+            m_device_id(deviceID), 
+            logger(traccc::getDefaultLogger("TracccGpuStandalone", traccc::Logging::Level::INFO)),
+            m_host_mr(host_mr),
+            m_stream(setCudaDeviceAndGetStream(deviceID)),
+            m_device_mr(device_mr),
+            m_cached_device_mr(
+                std::make_unique<vecmem::binary_page_memory_resource>(*m_device_mr)),
+            m_copy(m_stream.cudaStream()),
+            m_mr{*m_cached_device_mr, m_host_mr},
+            m_propagation_config(m_propagation_opts),
+            m_clustering_config{256, 16, 8, 256},
+            m_finder_config(create_and_setup_finder_config()), // Initialize m_finder_config using the helper
+            m_grid_config(m_finder_config), 
+            m_filter_config(), 
+            // Initialize m_finding_config with members in declaration order
+            m_finding_config{
+                .max_num_branches_per_seed = 3,                
+                .max_num_branches_per_surface = 5, 
+                .min_track_candidates_per_track = 3,
+                .max_track_candidates_per_track = 20,
+                .max_num_skipping_per_cand = 3,
+                .min_step_length_for_next_surface = 0.5f * detray::unit<float>::mm,
+                .max_step_counts_for_next_surface = 100,
+                .chi2_max = 10.f,
+                .propagation = { 
+                    .navigation = { 
+                        .overstep_tolerance = -300.f * traccc::unit<float>::um
+                    },
+                    .stepping = {
+                        .min_stepsize = 1e-4f * traccc::unit<float>::mm,
+                        .rk_error_tol = 1e-4f * traccc::unit<float>::mm,
+                        .step_constraint = std::numeric_limits<float>::max(),
+                        .path_limit = 5.f * traccc::unit<float>::m,
+                        .max_rk_updates = 10000u,
+                        .use_mean_loss = true,
+                        .use_eloss_gradient = false,
+                        .use_field_gradient = false,
+                        .do_covariance_transport = true
+                    }
                 }
-            }
-            // .ptc_hypothesis and .initial_links_per_seed will use their defaults
-        }, 
-        m_fitting_config{
-            .propagation = { 
-                .navigation = {
-                    .min_mask_tolerance = 1e-5f * traccc::unit<float>::mm,
-                    .max_mask_tolerance = 3.f * traccc::unit<float>::mm,
-                    .overstep_tolerance = -300.f * traccc::unit<float>::um,
-                    .search_window = {0u, 0u}
+                // .ptc_hypothesis and .initial_links_per_seed will use their defaults
+            }, 
+            m_fitting_config{
+                .propagation = { 
+                    .navigation = {
+                        .min_mask_tolerance = 1e-5f * traccc::unit<float>::mm,
+                        .max_mask_tolerance = 3.f * traccc::unit<float>::mm,
+                        .overstep_tolerance = -300.f * traccc::unit<float>::um,
+                        .search_window = {0u, 0u}
+                    }
                 }
-            }
-        }, 
-        m_field_vec{0.f, 0.f, m_finder_config.bFieldInZ},
-        m_field(detray::bfield::create_const_field<host_detector_type::scalar_type>(m_field_vec)),
-        m_det_descr{m_host_mr},
-        m_clusterization(m_mr, m_copy, m_stream, m_clustering_config),
-        m_measurement_sorting(m_mr, m_copy, m_stream, 
-            logger->cloneWithSuffix("MeasSortingAlg")),
-        m_spacepoint_formation(m_mr, m_copy, m_stream,
-            logger->cloneWithSuffix("SpFormationAlg")),
-        m_seeding(m_finder_config, m_grid_config, m_filter_config, 
-                    m_mr, m_copy, m_stream,
-                    logger->cloneWithSuffix("SeedingAlg")),
-        m_track_parameter_estimation(m_mr, m_copy, m_stream,
-            logger->cloneWithSuffix("TrackParEstAlg")),
-        m_finding(m_finding_config, m_mr, m_copy, m_stream, 
-            logger->cloneWithSuffix("TrackFindingAlg")),
-        m_fitting(m_fitting_config, m_mr, m_copy, m_stream, 
-            logger->cloneWithSuffix("TrackFittingAlg")),
-        m_copy_track_states(m_mr, m_copy, logger->cloneWithSuffix("TrackStateD2HCopyAlg")),
-        m_resolution_config(),
-        m_resolution_alg(m_resolution_config)
+            }, 
+            m_field_vec{0.f, 0.f, m_finder_config.bFieldInZ},
+            m_field(detray::bfield::create_const_field<host_detector_type::scalar_type>(m_field_vec)),
+            m_det_descr{*m_host_mr},
+            m_clusterization(m_mr, m_copy, m_stream, m_clustering_config),
+            m_measurement_sorting(m_mr, m_copy, m_stream, 
+                logger->cloneWithSuffix("MeasSortingAlg")),
+            m_spacepoint_formation(m_mr, m_copy, m_stream,
+                logger->cloneWithSuffix("SpFormationAlg")),
+            m_seeding(m_finder_config, m_grid_config, m_filter_config, 
+                        m_mr, m_copy, m_stream,
+                        logger->cloneWithSuffix("SeedingAlg")),
+            m_track_parameter_estimation(m_mr, m_copy, m_stream,
+                logger->cloneWithSuffix("TrackParEstAlg")),
+            m_finding(m_finding_config, m_mr, m_copy, m_stream, 
+                logger->cloneWithSuffix("TrackFindingAlg")),
+            m_fitting(m_fitting_config, m_mr, m_copy, m_stream, 
+                logger->cloneWithSuffix("TrackFittingAlg")),
+            m_copy_track_states(m_mr, m_copy, logger->cloneWithSuffix("TrackStateD2HCopyAlg"))
     {
         // Tell the user what device is being used.
         int device = 0;
@@ -331,10 +332,12 @@ public:
     // default destructor
     ~TracccGpuStandalone() = default;
 
-    traccc::edm::spacepoint_collection::host read_spacepoints(
+    void read_spacepoints(
+        traccc::edm::spacepoint_collection::host& spacepoints,
         std::vector<clusterInfo>& detray_clusters, bool do_strip);
 
-    traccc::measurement_collection_types::host read_measurements(
+    void read_measurements(
+        traccc::measurement_collection_types::host& measurements,
         std::vector<clusterInfo>& detray_clusters, bool do_strip);
 
     std::vector<clusterInfo> read_clusters_from_csv(

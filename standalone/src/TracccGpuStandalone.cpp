@@ -17,18 +17,18 @@ void TracccGpuStandalone::initialize()
     m_device_det_descr = traccc::silicon_detector_description::buffer(
             static_cast<traccc::silicon_detector_description::buffer::size_type>(
                 m_det_descr.size()),
-            m_device_mr);
+            *m_device_mr);
     m_copy.setup(m_device_det_descr)->wait();
     m_copy(m_det_descr_data, m_device_det_descr)->wait();
 
     // Create the detector and read the configuration file
-    m_detector = std::make_unique<host_detector_type>(m_host_mr);
+    m_detector = std::make_unique<host_detector_type>(*m_host_mr);
     traccc::io::read_detector(
-        *m_detector, m_host_mr, m_detector_opts.detector_file,
+        *m_detector, *m_host_mr, m_detector_opts.detector_file,
         m_detector_opts.material_file, m_detector_opts.grid_file);
     
     // copy it to the device - dereference the unique_ptr to get the actual object
-    m_device_detector = detray::get_buffer(*m_detector, m_device_mr, m_copy);
+    m_device_detector = detray::get_buffer(*m_detector, *m_device_mr, m_copy);
     m_stream.synchronize();
     m_device_detector_view = detray::get_data(m_device_detector);
 
@@ -58,7 +58,7 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
     m_stream.synchronize();
 
     //! temporary copy to host for verification
-    traccc::edm::seed_collection::host seeds_host{m_host_mr};
+    traccc::edm::seed_collection::host seeds_host{*m_host_mr};
     m_copy(seeds, seeds_host)->wait();
     std::cout << "Number of seeds: " << seeds_host.size() << std::endl;
     //! temporary copy to host for verification
@@ -95,20 +95,22 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
     // copy track states to host
     auto track_states_host = m_copy_track_states(track_states);
     // run ambiguity resolution
-    // TODO: make this optional? 
-    traccc::track_state_container_types::host resolved_track_states_cuda =
-        m_resolution_alg(track_states_host);
+    // // TODO: make this optional? 
+    // traccc::track_state_container_types::host resolved_track_states_cuda =
+    //     m_resolution_alg(track_states_host);
 
-    return resolved_track_states_cuda;
+    // return resolved_track_states_cuda;
+
+    return track_states_host;
 }
 
-traccc::edm::spacepoint_collection::host TracccGpuStandalone::read_spacepoints(
+void TracccGpuStandalone::read_spacepoints(
+    traccc::edm::spacepoint_collection::host& spacepoints,
     std::vector<clusterInfo>& detray_clusters, bool do_strip)
 {
-    traccc::edm::spacepoint_collection::host spacepoints{m_host_mr};
-    traccc::measurement_collection_types::host measurements =
-        read_measurements(detray_clusters, do_strip);
-  
+    traccc::measurement_collection_types::host measurements;
+    read_measurements(measurements, detray_clusters, do_strip);
+
     std::map<traccc::geometry_id, unsigned int> m;
     for(std::vector<clusterInfo>::size_type i = 0; i < detray_clusters.size();i++){
         clusterInfo cluster = detray_clusters[i];
@@ -118,56 +120,43 @@ traccc::edm::spacepoint_collection::host TracccGpuStandalone::read_spacepoints(
         // traccc::measurement meas;
         // meas = measurements[i];
 
-        spacepoints.push_back({static_cast<unsigned int>(i), {
-            static_cast<float>(cluster.globalPosition[0]),
+        spacepoints.push_back({static_cast<unsigned int>(i), 
+            traccc::edm::spacepoint_collection::host::INVALID_MEASUREMENT_INDEX,
+            {static_cast<float>(cluster.globalPosition[0]),
             static_cast<float>(cluster.globalPosition[1]),
             static_cast<float>(cluster.globalPosition[2])},
             0.f, 0.f});
     }
-
-    // // Verify values of spacepoints for the first spacepoint
-    // if (spacepoints.size() > 0) {
-    //     const auto& first_spacepoint = spacepoints[0];
-    //     std::cout << "First spacepoint: "
-    //             << "global[0]: " << first_spacepoint.global[0]
-    //             << ", global[1]: " << first_spacepoint.global[1]
-    //             << ", global[2]: " << first_spacepoint.global[2]
-    //             << std::endl;
-    // }
-
-    return spacepoints;
 }
 
-traccc::measurement_collection_types::host TracccGpuStandalone::read_measurements(
+
+void TracccGpuStandalone::read_measurements(
+    traccc::measurement_collection_types::host& measurements,
     std::vector<clusterInfo>& detray_clusters, bool do_strip)
 {
-    traccc::measurement_collection_types::host measurements;
-
-    //! two more pointless lines?
     std::map<traccc::geometry_id, unsigned int> m;
-    std::multimap<uint64_t, detray::geometry::barcode> sf_seen;
+    std::multimap<uint64_t,detray::geometry::barcode> sf_seen;
 
-    for(std::vector<clusterInfo>::size_type i = 0; i < detray_clusters.size();i++)
-    {
+    for(std::vector<clusterInfo>::size_type i = 0; i < detray_clusters.size();i++){
 
         clusterInfo cluster = detray_clusters[i];
-        if(do_strip && cluster.pixel) {continue;}
+        if(do_strip && cluster.pixel){continue;}
 
         uint64_t geometry_id = cluster.detray_id;
         const auto& sf = detray::geometry::barcode{geometry_id};
-        const detray::tracking_surface surface{*m_detector, sf}; //! unused variable?
-        //! pointless lines?
+        const detray::tracking_surface surface{*m_detector, sf};
         cluster.localPosition[0] = cluster.localPosition.x();
         cluster.localPosition[1] = cluster.localPosition.y();
+
+        // ATH_MSG_INFO("Traccc measurement at index " << i << ": " << cluster.localPosition[0] << "," << cluster.localPosition[1]);
 
         // Construct the measurement object.
         traccc::measurement meas;
         std::array<detray::dsize_type<traccc::default_algebra>, 2u> indices{0u, 0u};
         meas.meas_dim = 0u;
-        for (unsigned int ipar = 0; ipar < 2u; ++ipar) 
-        {
-            if (((cluster.local_key) & (1 << (ipar + 1))) != 0) 
-            {
+        for (unsigned int ipar = 0; ipar < 2u; ++ipar) {
+            if (((cluster.local_key) & (1 << (ipar + 1))) != 0) {
+
                 switch (ipar) {
                     case 0: {
                         meas.local[0] = cluster.localPosition.x();
@@ -190,19 +179,8 @@ traccc::measurement_collection_types::host TracccGpuStandalone::read_measurement
         meas.measurement_id = i;
         measurements.push_back(meas);
     }
-
-    // verify values of measurements for first meas
-    if (measurements.size() > 0) {
-        std::cout << "First measurement: "
-                  << "local[0]: " << measurements[0].local[0]
-                  << ", local[1]: " << measurements[0].local[1]
-                  << ", variance[0]: " << measurements[0].variance[0]
-                  << ", variance[1]: " << measurements[0].variance[1]
-                  << std::endl;
-    }
-
-    return measurements;
 }
+
 
 std::vector<clusterInfo> TracccGpuStandalone::read_clusters_from_csv(
     const std::string& filename)
@@ -367,16 +345,23 @@ int main(int argc, char *argv[])
     std::cout << "Using device ID: " << deviceID << std::endl;
     std::cout << "Running " << argv[0] << " on " << event_file << std::endl;
 
-    TracccGpuStandalone traccc_gpu(deviceID);
+    vecmem::host_memory_resource host_mr;
+    vecmem::cuda::device_memory_resource device_mr(deviceID);
+    
+    TracccGpuStandalone traccc_gpu(&host_mr, &device_mr, deviceID);
+   
+    traccc::edm::spacepoint_collection::host spacepoints(host_mr);
+    traccc::measurement_collection_types::host measurements(&host_mr);
 
     std::vector<clusterInfo> detray_clusters = traccc_gpu.read_clusters_from_csv(event_file);
-    auto measurements_per_event = traccc_gpu.read_measurements(detray_clusters, false);
-    std::cout << "Number of measurements: " << measurements_per_event.size() << std::endl;
-    auto spacepoints_per_event = traccc_gpu.read_spacepoints(detray_clusters, false);
-    std::cout << "Number of spacepoints: " << spacepoints_per_event.size() << std::endl;
+    traccc_gpu.read_measurements(measurements, detray_clusters, false);
+    traccc_gpu.read_spacepoints(spacepoints, detray_clusters, false);
+
+    std::cout << "Number of measurements: " << measurements.size() << std::endl;
+    std::cout << "Number of spacepoints: " << spacepoints.size() << std::endl;
 
     // run the traccc algorithm
-    auto traccc_result = traccc_gpu.run(spacepoints_per_event, measurements_per_event);
+    auto traccc_result = traccc_gpu.run(spacepoints, measurements);
     std::cout << "Number of fitted tracks: " << traccc_result.size() << std::endl;
 
     return 0;
