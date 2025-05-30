@@ -35,9 +35,6 @@ void TracccGpuStandalone::initialize()
     return;
 }
 
-// input has to be _clusters_ now
-// TODO: could create spacepoints from measurements here
-// TODO: measurement sorting using same strategy: first measurements to spacepoints
 traccc::track_state_container_types::host TracccGpuStandalone::run(
     traccc::edm::spacepoint_collection::host spacepoints_per_event,
     traccc::measurement_collection_types::host measurements_per_event)
@@ -51,55 +48,41 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
         static_cast<unsigned int>(measurements_per_event.size()), *m_cached_device_mr);
     m_copy(vecmem::get_data(measurements_per_event), measurements)->wait();
 
-    //
-    // ----------------- Seeding and track param est. -----------
-    //
+    // Seeding and track param est.
     auto seeds = m_seeding(spacepoints);
     m_stream.synchronize();
-
-    //! temporary copy to host for verification
-    traccc::edm::seed_collection::host seeds_host{*m_host_mr};
-    m_copy(seeds, seeds_host)->wait();
-    std::cout << "Number of seeds: " << seeds_host.size() << std::endl;
-    //! temporary copy to host for verification
 
     const traccc::cuda::track_params_estimation::output_type track_params =
         m_track_parameter_estimation(measurements, spacepoints,
             seeds, m_field_vec);
     m_stream.synchronize();
 
-    // std::cout << "Number of track params: " << track_params.size() << std::endl;
-    // m_stream.synchronize();
-    //
-    // ----------------- Finding and Fitting -----------------
-    //
     // track finding                        
     // Run the track finding
     const finding_algorithm::output_type track_candidates = m_finding(
         m_device_detector_view, m_field, measurements, track_params);
 
-    m_stream.synchronize();
-    std::cout << "Track finding complete" << std::endl;
-
     // Run the track fitting
     const fitting_algorithm::output_type track_states = 
         m_fitting(m_device_detector_view, m_field, track_candidates);
 
-    //
-    // ----------------- Return fitted track (headers) -----------------
-    // 
-
-    // print number of fitted tracks
-    std::cout << "Number of fitted tracks: " << track_states.headers.size() << std::endl;
+    // Print fitting stats
+    std::cout << "Number of measurements: " << measurements_per_event.size() << std::endl;
+    std::cout << "Number of spacepoints: " << spacepoints_per_event.size() << std::endl;
+    std::cout << "Number of seeds: " << m_copy.get_size(seeds) << std::endl;
+    std::cout << "Number of track params: " << m_copy.get_size(track_params) << std::endl;
+    std::cout << "Number of track candidates: " << track_candidates.items.size() << std::endl;
+    std::cout << "Number of fitted tracks: " << track_states.items.size() << std::endl;
 
     // copy track states to host
+    //! Expensive with so many gd track states
     auto track_states_host = m_copy_track_states(track_states);
-    // run ambiguity resolution
-    // // TODO: make this optional? 
-    // traccc::track_state_container_types::host resolved_track_states_cuda =
-    //     m_resolution_alg(track_states_host);
 
-    // return resolved_track_states_cuda;
+    // run ambiguity resolution
+    // TODO: this should run before fitting, but requires copy back and forth first
+    // TODO: ask traccc people about this
+    // traccc::track_state_container_types::host resolved_track_states_cuda =
+    //     m_resolution_alg(traccc::get_data(track_states_host));
 
     return track_states_host;
 }
@@ -362,7 +345,6 @@ int main(int argc, char *argv[])
 
     // run the traccc algorithm
     auto traccc_result = traccc_gpu.run(spacepoints, measurements);
-    std::cout << "Number of fitted tracks: " << traccc_result.size() << std::endl;
 
     return 0;
 }

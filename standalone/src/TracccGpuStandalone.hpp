@@ -174,6 +174,8 @@ private:
     finding_algorithm::config_type m_finding_config;
     /// Configuration for the track fitting
     fitting_algorithm::config_type m_fitting_config;
+    /// Ambiguity resolution (on the host)
+    traccc::host::greedy_ambiguity_resolution_algorithm::config_type m_resolution_config;
 
     /// Constant B field for the (seed) track parameter estimation
     traccc::vector3 m_field_vec;
@@ -213,8 +215,7 @@ private:
         m_copy_track_states;
 
     // ambiguity resolution
-    // traccc::greedy_ambiguity_resolution_algorithm::config_t m_resolution_config;
-    // traccc::greedy_ambiguity_resolution_algorithm m_resolution_alg;
+    traccc::host::greedy_ambiguity_resolution_algorithm m_resolution_alg;
 
     // Helper function to create and setup seedfinder_config
     static traccc::seedfinder_config create_and_setup_finder_config() {
@@ -298,6 +299,7 @@ public:
                     }
                 }
             }, 
+            m_resolution_config(),
             m_field_vec{0.f, 0.f, m_finder_config.bFieldInZ},
             m_field(detray::bfield::create_const_field<host_detector_type::scalar_type>(m_field_vec)),
             m_det_descr{*m_host_mr},
@@ -315,7 +317,8 @@ public:
                 logger->cloneWithSuffix("TrackFindingAlg")),
             m_fitting(m_fitting_config, m_mr, m_copy, m_stream, 
                 logger->cloneWithSuffix("TrackFittingAlg")),
-            m_copy_track_states(m_mr, m_copy, logger->cloneWithSuffix("TrackStateD2HCopyAlg"))
+            m_copy_track_states(m_mr, m_copy, logger->cloneWithSuffix("TrackStateD2HCopyAlg")),
+            m_resolution_alg(m_resolution_config, m_mr, logger->cloneWithSuffix("AmbiguityResolutionAlg"))
     {
         // Tell the user what device is being used.
         int device = 0;
