@@ -4,6 +4,10 @@ data/
 plots/
 performance/
 
+# data formats
+*.json
+*.csv
+
 # plots
 *.png
 *.pdf
