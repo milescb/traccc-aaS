@@ -82,6 +82,17 @@ struct clusterInfo {
     bool pixel;
 };
 
+struct fittingResult {
+    std::vector<float> chi2;
+    std::vector<float> ndf;
+    std::vector<std::vector<std::array<float, 2>>> local_positions;
+    std::vector<std::vector<std::array<float, 2>>> variances;
+    std::vector<std::vector<uint64_t>> detray_ids;
+    std::vector<std::vector<size_t>> measurement_ids;
+    std::vector<std::vector<unsigned int>> measurement_dims;
+    std::vector<std::vector<float>> times;
+};
+
 // function to set the CUDA device and get the stream
 static traccc::cuda::stream setCudaDeviceAndGetStream(int deviceID)
 {
@@ -370,17 +381,18 @@ public:
         traccc::measurement_collection_types::host& measurements,
         std::vector<clusterInfo>& detray_clusters, bool do_strip);
 
-    std::vector<clusterInfo> read_clusters_from_csv(
-        const std::string& filename);
-
     std::vector<clusterInfo> read_from_array(
         const std::vector<std::uint64_t> &geometry_ids,
         const std::vector<std::vector<double>> &data);
 
     void initialize();
+
     traccc::track_state_container_types::host run(
         traccc::edm::spacepoint_collection::host spacepoints_per_event,
         traccc::measurement_collection_types::host measurements_per_event);
+
+    fittingResult process_fitting_results(
+        const traccc::track_state_container_types::host &track_states);
 };
 
 void TracccGpuStandalone::initialize()
@@ -547,116 +559,6 @@ void TracccGpuStandalone::read_measurements(
     }
 }
 
-
-std::vector<clusterInfo> TracccGpuStandalone::read_clusters_from_csv(
-    const std::string& filename)
-{
-    std::vector<clusterInfo> clusters;
-    std::ifstream file(filename);
-
-    if (!file.is_open()) {
-        throw std::runtime_error("Could not open file: " + filename);
-    }
-
-    std::string line;
-    // Read and discard the header line
-    if (!std::getline(file, line)) {
-         throw std::runtime_error("Could not read header line from file: " + filename);
-    }
-
-    // Read data lines
-    while (std::getline(file, line)) {
-        std::stringstream ss(line);
-        std::string field;
-        clusterInfo cluster;
-        int col_index = 0;
-        double global_x, global_y, global_z;
-        double local_x, local_y;
-        int pixel_val;
-
-        try {
-            // Read each field separated by a comma
-            while (std::getline(ss, field, ',')) {
-                // Trim leading/trailing whitespace
-                field.erase(0, field.find_first_not_of(" \t\n\r\f\v"));
-                field.erase(field.find_last_not_of(" \t\n\r\f\v") + 1);
-
-                switch (col_index) {
-                    case 0: // atlas_id (ignored)
-                        break;
-                    case 1: // detray_id
-                        cluster.detray_id = std::stoull(field);
-                        break;
-                    case 2: // measurement_id (ignored)
-                        break;
-                    case 3: // local_key
-                        cluster.local_key = std::stoul(field);
-                        break;
-                    case 4: // local_x
-                        local_x = std::stod(field);
-                        break;
-                    case 5: // local_y
-                        local_y = std::stod(field);
-                        break;
-                    case 6: // global_x
-                        global_x = std::stod(field);
-                        break;
-                    case 7: // global_y
-                        global_y = std::stod(field);
-                        break;
-                    case 8: // global_z
-                        global_z = std::stod(field);
-                        break;
-                    case 9: // pixel
-                        pixel_val = std::stoi(field);
-                        cluster.pixel = (pixel_val != 0);
-                        break;
-                    default:
-                        // Handle unexpected extra columns if necessary
-                        break;
-                }
-                col_index++;
-            }
-             // Check if we read the expected number of columns
-            if (col_index != 10) {
-                 std::cerr << "Warning: Row has " << col_index << " columns, expected 10. Line: " << line << std::endl;
-                 continue; // Skip this row or handle error as appropriate
-            }
-
-            // Assign Eigen vectors after reading all components
-            cluster.globalPosition = Eigen::Vector3d(global_x, global_y, global_z);
-            cluster.localPosition = Eigen::Vector2d(local_x, local_y);
-
-            clusters.push_back(cluster);
-
-        } catch (const std::invalid_argument& e) {
-            std::cerr << "Warning: Invalid argument during conversion for line: " << line << ". Error: " << e.what() << std::endl;
-            // Skip this row or handle error as appropriate
-            continue;
-        } catch (const std::out_of_range& e) {
-            std::cerr << "Warning: Out of range during conversion for line: " << line << ". Error: " << e.what() << std::endl;
-            // Skip this row or handle error as appropriate
-            continue;
-        }
-    }
-
-    file.close();
-
-    // print first 5 clusters to ensure they are read correctly
-    std::cout << "Read " << clusters.size() << " clusters from file." << std::endl;
-    for (size_t i = 0; i < std::min(clusters.size(), size_t(5)); ++i) {
-        std::cout << "Cluster " << i << ": "
-                  << "detray_id: " << clusters[i].detray_id
-                  << ", local_key: " << clusters[i].local_key
-                  << ", globalPosition: (" << clusters[i].globalPosition.transpose() << ")"
-                  << ", localPosition: (" << clusters[i].localPosition.transpose() << ")"
-                  << ", pixel: " << clusters[i].pixel
-                  << std::endl;
-    }
-
-    return clusters;
-}
-
 std::vector<clusterInfo> TracccGpuStandalone::read_from_array(
     const std::vector<std::uint64_t> &geometry_ids,
     const std::vector<std::vector<double>> &data)
@@ -693,6 +595,48 @@ std::vector<clusterInfo> TracccGpuStandalone::read_from_array(
     }
 
     return clusters;
+}
+
+fittingResult TracccGpuStandalone::process_fitting_results(
+    const traccc::track_state_container_types::host &track_states)
+{
+    fittingResult result;
+
+    for (size_t i = 0; i < track_states.size(); ++i) {
+
+        const auto& [fit_res, state] = track_states.at(i);
+
+        result.chi2.push_back(fit_res.trk_quality.chi2);
+        result.ndf.push_back(fit_res.trk_quality.ndf);
+
+        std::vector<std::array<float, 2>> local_positions;
+        std::vector<std::array<float, 2>> variances;
+        std::vector<uint64_t> detray_ids;
+        std::vector<size_t> measurement_ids;
+        std::vector<unsigned int> measurement_dims;
+        std::vector<float> times;
+
+        for (const auto& st : state) {
+
+            const traccc::measurement& meas = st.get_measurement();
+
+            local_positions.push_back(meas.local);
+            variances.push_back(meas.variance);
+            detray_ids.push_back(meas.surface_link.value());
+            measurement_ids.push_back(meas.measurement_id);
+            measurement_dims.push_back(meas.meas_dim);
+            times.push_back(meas.time);
+        }
+
+        result.local_positions.push_back(local_positions);
+        result.variances.push_back(variances);
+        result.detray_ids.push_back(detray_ids);
+        result.measurement_ids.push_back(measurement_ids);
+        result.measurement_dims.push_back(measurement_dims);
+        result.times.push_back(times);
+    }
+
+    return result;
 }
 
 #endif 
