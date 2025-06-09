@@ -11,6 +11,20 @@ plt.style.use(mplhep.style.ROOT)
 
 import tritonclient.grpc as grpcclient
 
+def plot_histogram(data, name, xlabel, bins=50):
+    """Plots a histogram for the given data on a new canvas."""
+    if data is None or data.size == 0:
+        print(f"No data to plot for {name}")
+        return
+    plt.figure(figsize=(8, 8))
+    plt.hist(data, bins=bins, histtype='step', label=name)
+    plt.xlabel(xlabel)
+    plt.ylabel("Frequency")
+    plt.legend()
+    plt.tight_layout()
+    plt.yscale('log')
+    plt.savefig(f"plots/{name.replace(" ", "_")}.png")
+
 def main():
     # For the gRPC client, need to specify large enough concurrency to
     # issue all the inference requests to the server in parallel. For
@@ -26,8 +40,9 @@ def main():
 
     # Read input data
     input_data = pd.read_csv(FLAGS.filename)
-    input0_data = input_data['geometry_id'].to_numpy(dtype=np.uint64)
-    input1_data = input_data.drop('geometry_id', axis=1).to_numpy(dtype=np.float64)
+    input0_data = input_data['detray_id'].to_numpy(dtype=np.uint64)
+    feature_columns = ['local_key', 'local_x', 'local_y', 'global_x', 'global_y', 'global_z', 'is_pixel']
+    input1_data = input_data[feature_columns].to_numpy(dtype=np.float64)
 
     # Prepare inputs
     inputs = [
@@ -39,6 +54,15 @@ def main():
 
     # Specify outputs
     output_names = ["chi2", "ndf", "local_positions", "local_positions_lengths", "variances"]
+    output_names = [
+        "chi2", "ndf", 
+        "local_positions", 
+        "variances",
+        "detray_ids",
+        "measurement_ids",
+        "measurement_dims",
+        "times"
+    ]
     outputs = [grpcclient.InferRequestedOutput(name) for name in output_names]
 
     # Send inference request synchronously
@@ -49,47 +73,29 @@ def main():
     )
 
     # Retrieve and process outputs
-    chi2 = result.as_numpy("chi2")  # Should be shape (1,)
-    ndf = result.as_numpy("ndf")    # Should be shape (1,)
-    local_positions_buffer = result.as_numpy("local_positions")  # Shape (N, 2)
-    local_positions_lengths = result.as_numpy("local_positions_lengths")  # Shape (N,)
-    variances_buffer = result.as_numpy("variances")          # Shape (N, 2)
+    chi2 = result.as_numpy("chi2")
+    ndf = result.as_numpy("ndf")
+    local_positions = result.as_numpy("local_positions") 
+    variances = result.as_numpy("variances")             
+    detray_ids = result.as_numpy("detray_ids")            
+    measurement_ids = result.as_numpy("measurement_ids")  
+    measurement_dims = result.as_numpy("measurement_dims")
+    times = result.as_numpy("times")    
     
-    print("local_positions_buffer:", local_positions_buffer)
-    print("local_positions_buffer shape:", local_positions_buffer.shape)
-    print("local_positions_lengths:", local_positions_lengths)
-    print("local_positions_lengths shape:", local_positions_lengths.shape)
-    print("variances_buffer:", variances_buffer)
-    print("variances_buffer shape:", variances_buffer.shape)
+    # filter data with measurement_dims = 2
+    mask = measurement_dims == 2
+    local_positions = local_positions[mask]
+    variances = variances[mask]
+    detray_ids = detray_ids[mask]
+    measurement_ids = measurement_ids[mask]
+    measurement_dims = measurement_dims[mask]
+    times = times[mask] 
     
-    idx = 0
-    reconstructed_positions = []
-    reconstructed_variances = []
-    # position and variance lengths are the same by construction
-    for length in local_positions_lengths:
-        track_positions = []
-        track_variances = []
-        for _ in range(length):
-            pos = local_positions_buffer[idx]
-            track_positions.append(pos)
-            var = variances_buffer[idx]
-            track_variances.append(var)
-            idx += 1
-        reconstructed_positions.append(track_positions)
-        reconstructed_variances.append(track_variances)
-
-    # Print the outputs
-    print("chi2:", chi2)
-    print("chi2 shape:", chi2.shape)
-    print("ndf:", ndf)
-    print("reconstructed_positions:", reconstructed_positions)
-    print("reconstructed_variances:", reconstructed_variances)
-    
-    plt.figure(figsize=(6,6))
-    plt.hist(chi2/ndf, bins=25, range=(0, 5))
-    plt.xlabel(r"$\chi^2/ndf$", loc="right")
-    plt.ylabel("Fitted Track Results", loc="top")
-    plt.savefig("plots/chi2.png", bbox_inches="tight", dpi=300)
+    plot_histogram(chi2, "Chi2", "Chi2")
+    plot_histogram(ndf, "NDF", "NDF")    
+    plot_histogram(local_positions[:, 0], "Local Position X", "Local Position X")
+    plot_histogram(local_positions[:, 1], "Local Position Y", "Local Position Y")    
+    plot_histogram(measurement_dims, "Measurement Dims", "Measurement Dimensions")        
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -113,8 +119,8 @@ if __name__ == "__main__":
         "--filename",
         type=str,
         required=False,
-        default="event000000000-cells.csv",
-        help="Input file name. Default is event000000000-cells.csv.",
+        default="clusters.csv",
+        help="Input file name. Default is clusters.csv.",
     )
     parser.add_argument(
         "-a",
