@@ -274,8 +274,8 @@ ModelState::ValidateModelConfig()
         inputs.ArraySize() == 2, TRITONSERVER_ERROR_INVALID_ARG,
         std::string("model configuration must have 2 inputs"));
     RETURN_ERROR_IF_FALSE(
-        outputs.ArraySize() == 7, TRITONSERVER_ERROR_INVALID_ARG,
-        std::string("model configuration must have 5 outputs"));
+        outputs.ArraySize() == 8, TRITONSERVER_ERROR_INVALID_ARG,
+        std::string("model configuration must have 8 outputs"));
 
     common::TritonJson::Value input_geoid, input_clusters, output;
     RETURN_IF_ERROR(inputs.IndexAsObject(0, &input_geoid));
@@ -373,30 +373,38 @@ TRITONBACKEND_ModelFinalize(TRITONBACKEND_Model* model)
 // BackendModelInstance class provided in the backend utilities that
 // provides many common functions.
 //
-class ModelInstanceState : public BackendModelInstance {
- public:
-  static TRITONSERVER_Error* Create(
-      ModelState* model_state,
-      TRITONBACKEND_ModelInstance* triton_model_instance,
-      ModelInstanceState** state);
-  virtual ~ModelInstanceState() = default;
+class ModelInstanceState : public BackendModelInstance 
+{
+private:
 
-  // Get the state of the model that corresponds to this instance.
-  ModelState* StateForModel() const { return model_state_; }
+    ModelState* model_state_;
 
-  // define standalone object
-  std::unique_ptr<TracccGpuStandalone> traccc_gpu_standalone_;
+    ModelInstanceState(
+        ModelState* model_state,
+        TRITONBACKEND_ModelInstance* triton_model_instance)
+        : BackendModelInstance(model_state, triton_model_instance),
+            model_state_(model_state),
+            host_mr_(),
+            device_mr_(DeviceId())
+    {
+    }
 
- private:
-  ModelInstanceState(
-      ModelState* model_state,
-      TRITONBACKEND_ModelInstance* triton_model_instance)
-      : BackendModelInstance(model_state, triton_model_instance),
-        model_state_(model_state)
-  {
-  }
+public:
+    static TRITONSERVER_Error* Create(
+        ModelState* model_state,
+        TRITONBACKEND_ModelInstance* triton_model_instance,
+        ModelInstanceState** state);
+    virtual ~ModelInstanceState() = default;
 
-  ModelState* model_state_;
+    // Get the state of the model that corresponds to this instance.
+    ModelState* StateForModel() const { return model_state_; }
+
+    // define standalone object
+    std::unique_ptr<TracccGpuStandalone> traccc_gpu_standalone_;
+
+    // Memory resources
+    vecmem::host_memory_resource host_mr_;
+    vecmem::cuda::device_memory_resource device_mr_;
 };
 
 TRITONSERVER_Error*
@@ -451,7 +459,11 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
             ("Failed to set CUDA device: " + std::string(cudaGetErrorString(err))).c_str());
     }
   
-    instance_state->traccc_gpu_standalone_ = std::make_unique<TracccGpuStandalone>(instance_state->DeviceId());
+    instance_state->traccc_gpu_standalone_ = std::make_unique<TracccGpuStandalone>(
+        &instance_state->host_mr_,
+        &instance_state->device_mr_,
+        instance_state->DeviceId()
+    );
     return nullptr;  // success
 }
 
@@ -650,7 +662,6 @@ TRITONBACKEND_ModelInstanceExecute(
     input_data_geoid.reserve(num_uint_geoid);
     input_data_clusters.reserve(num_rows_clusters);
 
-    // FIXME type 
     for (size_t i = 0; i < num_rows_clusters; ++i) {
         std::vector<double> row;
         row.reserve(num_features_clusters);
@@ -661,10 +672,10 @@ TRITONBACKEND_ModelInstanceExecute(
         input_data_geoid.push_back(uint_geoid_ptr[i]);
     }
 
-    int numCells = input_data_clusters.size();
-    std::cout << "Number of clusters received: " << numCells  << std::endl;
+    int numClusters = input_data_clusters.size();
+    std::cout << "Number of clusters received: " << numClusters  << std::endl;
     for (int i = 0; i < 5; ++i) {
-        std::cout << "Cell " << i << ": ";
+        std::cout << "Cluster " << i << ": ";
         std::cout << input_data_geoid[i] << " ";
         for (size_t j = 0; j < num_features_clusters; ++j) {
             std::cout << input_data_clusters[i][j] << " ";
@@ -672,137 +683,201 @@ TRITONBACKEND_ModelInstanceExecute(
         std::cout << std::endl;
     }
 
-    std::vector<clusterInfo> clusters = instance_state->traccc_gpu_standalone_->read_from_array(input_data_geoid, input_data_clusters);
-    auto measurements = read_measurements(clusters, false);
-    auto spacepoints = read_spacepoints(clusters, false);
-    auto result = instance_state->traccc_gpu_standalone_->run(spacepoints, measurements);
+    // Read measurements into traccc 
+    std::vector<clusterInfo> detray_clusters = instance_state->traccc_gpu_standalone_->read_from_array(input_data_geoid, input_data_clusters);
+    std::sort(detray_clusters.begin(), detray_clusters.end(), measurement_sort_comp());
 
-    // uint64_t compute_end_ns = 0;
-    // SET_TIMESTAMP(compute_end_ns);
+    // Initialize spacepoints and measurements for this execution run, using the instance's host_mr
+    traccc::edm::spacepoint_collection::host spacepoints(instance_state->host_mr_);
+    traccc::measurement_collection_types::host measurements(&instance_state->host_mr_);
 
-    // bool supports_first_dim_batching;
-    // RESPOND_ALL_AND_SET_NULL_IF_ERROR(
-    //     responses, request_count,
-    //     model_state->SupportsFirstDimBatching(&supports_first_dim_batching));
+    // Populate spacepoints and measurements using methods from TracccGpuStandalone
+    instance_state->traccc_gpu_standalone_->read_measurements(measurements, detray_clusters, false);
+    instance_state->traccc_gpu_standalone_->read_spacepoints(spacepoints, detray_clusters, false);
+    
+    auto track_states = instance_state->traccc_gpu_standalone_->run(spacepoints, measurements);
 
-    // // Because the output tensor values are concatenated into a single
-    // // contiguous 'output_buffer', the backend must "scatter" them out
-    // // to the individual response output tensors.  The backend utilities
-    // // provide a "responder" to facilitate this scattering process.
-    // // BackendOutputResponder does NOT support TRITONSERVER_TYPE_BYTES
-    // // data type.
+    fittingResult result = instance_state->traccc_gpu_standalone_->process_fitting_results(
+        track_states);
 
-    // // Initialize the responder
-    // BackendOutputResponder responder(
-    //     requests, request_count, &responses, model_state->TritonMemoryManager(),
-    //     supports_first_dim_batching, false /* pinned_enabled */,
-    //     nullptr /* stream*/);
+    uint64_t compute_end_ns = 0;
+    SET_TIMESTAMP(compute_end_ns);
 
-    // // The 'responders's ProcessTensor function will copy the portion of
-    // // 'output_buffer' corresponding to each request's output into the
-    // // response for that request.
+    bool supports_first_dim_batching;
+    RESPOND_ALL_AND_SET_NULL_IF_ERROR(
+        responses, request_count,
+        model_state->SupportsFirstDimBatching(&supports_first_dim_batching));
 
-    // // Process the outputs
-    // {
-    //     // --------------- Process 'chi2' ---------------
-    //     size_t num_tracks = result.chi2.size();
-    //     std::vector<int64_t> num_tracks_shape = {static_cast<int64_t>(num_tracks)};
+    // Because the output tensor values are concatenated into a single
+    // contiguous 'output_buffer', the backend must "scatter" them out
+    // to the individual response output tensors.  The backend utilities
+    // provide a "responder" to facilitate this scattering process.
+    // BackendOutputResponder does NOT support TRITONSERVER_TYPE_BYTES
+    // data type.
 
-    //     std::vector chi2 = result.chi2;
-    //     const char* chi2_buffer = reinterpret_cast<const char*>(chi2.data());
-    //     responder.ProcessTensor(
-    //         "chi2",
-    //         TRITONSERVER_TYPE_FP32,
-    //         num_tracks_shape,
-    //         chi2_buffer,
-    //         TRITONSERVER_MEMORY_CPU /* memory_type */,
-    //         0 /* memory_type_id */);
+    // Initialize the responder
+    BackendOutputResponder responder(
+        requests, request_count, &responses, model_state->TritonMemoryManager(),
+        supports_first_dim_batching, false /* pinned_enabled */,
+        nullptr /* stream*/);
 
-    //     // --------------- Process 'ndf' ---------------
-    //     std::vector ndf = result.ndf;
-    //     const char* ndf_buffer = reinterpret_cast<const char*>(ndf.data());
-    //     responder.ProcessTensor(
-    //         "ndf",
-    //         TRITONSERVER_TYPE_FP32,
-    //         num_tracks_shape,
-    //         ndf_buffer,
-    //         TRITONSERVER_MEMORY_CPU /* memory_type */,
-    //         0 /* memory_type_id */);
+    // The 'responders's ProcessTensor function will copy the portion of
+    // 'output_buffer' corresponding to each request's output into the
+    // response for that request.
 
-    //     // --------------- Process 'local_positions' ---------------
-    //     std::vector<float> local_positions_buffer;
-    //     std::vector<int32_t> local_positions_lengths;
+    // Process the outputs
+    {
+        // --------------- Process 'chi2' ---------------
+        size_t num_tracks = result.chi2.size();
+        std::vector<int64_t> num_tracks_shape = {static_cast<int64_t>(num_tracks)};
 
-    //     for (const auto& track_positions : result.local_positions) {
-    //         local_positions_lengths.push_back(static_cast<int32_t>(track_positions.size()));
-    //         for (const auto& pos : track_positions) {
-    //             local_positions_buffer.push_back(pos[0]);
-    //             local_positions_buffer.push_back(pos[1]);
-    //         }
-    //     }
+        std::vector chi2 = result.chi2;
+        const char* chi2_buffer = reinterpret_cast<const char*>(chi2.data());
+        responder.ProcessTensor(
+            "chi2",
+            TRITONSERVER_TYPE_FP32,
+            num_tracks_shape,
+            chi2_buffer,
+            TRITONSERVER_MEMORY_CPU /* memory_type */,
+            0 /* memory_type_id */);
 
-    //     // Prepare the shape: [total_number_of_positions, 2]
-    //     std::vector<int64_t> local_positions_shape = {
-    //         static_cast<int64_t>(local_positions_buffer.size() / 2), 2
-    //     };
+        // --------------- Process 'ndf' ---------------
+        std::vector ndf = result.ndf;
+        const char* ndf_buffer = reinterpret_cast<const char*>(ndf.data());
+        responder.ProcessTensor(
+            "ndf",
+            TRITONSERVER_TYPE_FP32,
+            num_tracks_shape,
+            ndf_buffer,
+            TRITONSERVER_MEMORY_CPU /* memory_type */,
+            0 /* memory_type_id */);
 
-    //     const char* local_positions_data = reinterpret_cast<const char*>(local_positions_buffer.data());
+        // --------------- Process 'local_positions' ---------------
+        std::vector<float> local_positions_buffer;
 
-    //     // Process 'local_positions' tensor
-    //     responder.ProcessTensor(
-    //         "local_positions",
-    //         TRITONSERVER_TYPE_FP32,
-    //         local_positions_shape,
-    //         local_positions_data,
-    //         TRITONSERVER_MEMORY_CPU,
-    //         0 /* memory_type_id */
-    //     );
+        for (const auto& track_positions : result.local_positions) {
+            for (const auto& pos : track_positions) {
+                local_positions_buffer.push_back(pos[0]);
+                local_positions_buffer.push_back(pos[1]);
+            }
+        }
 
-    //     // Process 'local_positions_lengths' tensor
-    //     std::vector<int64_t> lengths_shape = {
-    //         static_cast<int64_t>(local_positions_lengths.size())
-    //     };
+        // Prepare the shape: [total_number_of_positions, 2]
+        std::vector<int64_t> local_positions_shape = {
+            static_cast<int64_t>(local_positions_buffer.size() / 2), 2
+        };
 
-    //     const char* local_positions_lengths_data = reinterpret_cast<const char*>(local_positions_lengths.data());
+        const char* local_positions_data = reinterpret_cast<const char*>(local_positions_buffer.data());
 
-    //     responder.ProcessTensor(
-    //         "local_positions_lengths",
-    //         TRITONSERVER_TYPE_INT32,
-    //         lengths_shape,
-    //         local_positions_lengths_data,
-    //         TRITONSERVER_MEMORY_CPU,
-    //         0 /* memory_type_id */
-    //     );
+        // Process 'local_positions' tensor
+        responder.ProcessTensor(
+            "local_positions",
+            TRITONSERVER_TYPE_FP32,
+            local_positions_shape,
+            local_positions_data,
+            TRITONSERVER_MEMORY_CPU,
+            0 /* memory_type_id */
+        );
 
-    //     // --------------- Process 'variances' ---------------
-    //     std::vector<float> variances_buffer;
-    //     std::vector<int32_t> variances_lengths;
+        // --------------- Process 'variances' ---------------
+        std::vector<float> variances_buffer;
 
-    //     for (const auto& track_variances : result.variances) {
-    //         variances_lengths.push_back(static_cast<int32_t>(track_variances.size()));
-    //         for (const auto& var : track_variances) {
-    //             variances_buffer.push_back(var[0]);
-    //             variances_buffer.push_back(var[1]);
-    //         }
-    //     }
+        for (const auto& track_variances : result.variances) {
+            for (const auto& var : track_variances) {
+                variances_buffer.push_back(var[0]);
+                variances_buffer.push_back(var[1]);
+            }
+        }
 
-    //     // Prepare the shape: [total_number_of_variances, 2]
-    //     std::vector<int64_t> variances_shape = {
-    //         static_cast<int64_t>(variances_buffer.size() / 2), 2
-    //     };
+        // Prepare the shape: [total_number_of_variances, 2]
+        std::vector<int64_t> variances_shape = {
+            static_cast<int64_t>(variances_buffer.size() / 2), 2
+        };
 
-    //     const char* variances_data = reinterpret_cast<const char*>(variances_buffer.data());
+        const char* variances_data = reinterpret_cast<const char*>(variances_buffer.data());
 
-    //     // Process 'variances' tensor
-    //     responder.ProcessTensor(
-    //         "variances",
-    //         TRITONSERVER_TYPE_FP32,
-    //         variances_shape,
-    //         variances_data,
-    //         TRITONSERVER_MEMORY_CPU,
-    //         0 /* memory_type_id */
-    //     );
-    // }
+        // Process 'variances' tensor
+        responder.ProcessTensor(
+            "variances",
+            TRITONSERVER_TYPE_FP32,
+            variances_shape,
+            variances_data,
+            TRITONSERVER_MEMORY_CPU,
+            0 /* memory_type_id */
+        );
+
+               // --------------- Process 'detray_ids' ---------------
+        std::vector<uint64_t> detray_ids_buffer;
+        for (const auto& track_ids : result.detray_ids) {
+            for (const auto& id : track_ids) {
+                detray_ids_buffer.push_back(id);
+            }
+        }
+        std::vector<int64_t> detray_ids_shape = {static_cast<int64_t>(detray_ids_buffer.size())};
+        const char* detray_ids_data = reinterpret_cast<const char*>(detray_ids_buffer.data());
+        responder.ProcessTensor(
+            "detray_ids",
+            TRITONSERVER_TYPE_UINT64,
+            detray_ids_shape,
+            detray_ids_data,
+            TRITONSERVER_MEMORY_CPU,
+            0 /* memory_type_id */
+        );
+
+        // --------------- Process 'measurement_ids' ---------------
+        std::vector<uint64_t> measurement_ids_buffer; // Assuming size_t maps to uint64_t for Triton
+        for (const auto& track_meas_ids : result.measurement_ids) {
+            for (const auto& id : track_meas_ids) {
+                measurement_ids_buffer.push_back(static_cast<uint64_t>(id));
+            }
+        }
+        std::vector<int64_t> measurement_ids_shape = {static_cast<int64_t>(measurement_ids_buffer.size())};
+        const char* measurement_ids_data = reinterpret_cast<const char*>(measurement_ids_buffer.data());
+        responder.ProcessTensor(
+            "measurement_ids",
+            TRITONSERVER_TYPE_UINT64,
+            measurement_ids_shape,
+            measurement_ids_data,
+            TRITONSERVER_MEMORY_CPU,
+            0 /* memory_type_id */
+        );
+
+        // --------------- Process 'measurement_dims' ---------------
+        std::vector<uint32_t> measurement_dims_buffer;
+        for (const auto& track_meas_dims : result.measurement_dims) {
+            for (const auto& dim : track_meas_dims) {
+                measurement_dims_buffer.push_back(dim);
+            }
+        }
+        std::vector<int64_t> measurement_dims_shape = {static_cast<int64_t>(measurement_dims_buffer.size())};
+        const char* measurement_dims_data = reinterpret_cast<const char*>(measurement_dims_buffer.data());
+        responder.ProcessTensor(
+            "measurement_dims",
+            TRITONSERVER_TYPE_UINT32,
+            measurement_dims_shape,
+            measurement_dims_data,
+            TRITONSERVER_MEMORY_CPU,
+            0 /* memory_type_id */
+        );
+
+        // --------------- Process 'times' ---------------
+        std::vector<float> times_buffer;
+        for (const auto& track_times : result.times) {
+            for (const auto& time_val : track_times) {
+                times_buffer.push_back(time_val);
+            }
+        }
+        std::vector<int64_t> times_shape = {static_cast<int64_t>(times_buffer.size())};
+        const char* times_data = reinterpret_cast<const char*>(times_buffer.data());
+        responder.ProcessTensor(
+            "times",
+            TRITONSERVER_TYPE_FP32,
+            times_shape,
+            times_data,
+            TRITONSERVER_MEMORY_CPU,
+            0 /* memory_type_id */
+        );
+    }
 
     // Finalize the responder. If 'true' is returned, the output
     // tensors' data will not be valid until the backend synchronizes

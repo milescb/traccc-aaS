@@ -9,7 +9,7 @@ input [
   {
     name: "FEATURES"
     data_type: TYPE_FP64
-    dims: [ -1, 5 ]
+    dims: [ -1, 7 ]
   }
 ]
 output [
@@ -29,14 +29,29 @@ output [
     dims: [-1, 2]
   },
   {
-    name: "local_positions_lengths"
-    data_type: TYPE_INT32
-    dims: [-1]
-  },
-  {
     name: "variances"
     data_type: TYPE_FP32
     dims: [-1, 2]
+  },
+  {
+    name: "detray_ids"
+    data_type: TYPE_UINT64
+    dims: [-1]
+  },
+  {
+    name: "measurement_ids"
+    data_type: TYPE_UINT64
+    dims: [-1]
+  },
+  {
+    name: "measurement_dims"
+    data_type: TYPE_UINT32
+    dims: [-1]
+  },
+  {
+    name: "times"
+    data_type: TYPE_FP32
+    dims: [-1]
   }
 ]
 instance_group [
