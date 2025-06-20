@@ -6,8 +6,10 @@
 
 // Project include(s).
 #include "traccc/clusterization/clustering_config.hpp"
+#include "traccc/ambiguity_resolution/greedy_ambiguity_resolution_algorithm.hpp"
 #include "traccc/cuda/clusterization/clusterization_algorithm.hpp"
 #include "traccc/cuda/clusterization/measurement_sorting_algorithm.hpp"
+#include "traccc/cuda/ambiguity_resolution/greedy_ambiguity_resolution_algorithm.hpp"
 #include "traccc/cuda/finding/finding_algorithm.hpp"
 #include "traccc/cuda/fitting/fitting_algorithm.hpp"
 #include "traccc/cuda/seeding/seeding_algorithm.hpp"
@@ -18,11 +20,11 @@
 #include "traccc/edm/track_state.hpp"
 #include "traccc/fitting/kalman_filter/kalman_fitter.hpp"
 #include "traccc/utils/algorithm.hpp"
+#include "traccc/utils/bfield.hpp"
 #include "traccc/device/container_d2h_copy_alg.hpp"
 
 // Detray include(s).
 #include "detray/core/detector.hpp"
-#include "detray/detectors/bfield.hpp"
 #include "detray/io/frontend/detector_reader.hpp"
 #include "detray/navigation/navigator.hpp"
 #include "detray/propagator/propagator.hpp"
@@ -101,12 +103,14 @@ void read_cells(traccc::edm::silicon_cell_collection::host &out,
 // Type definitions
 using host_detector_type = traccc::default_detector::host;
 using device_detector_type = traccc::default_detector::device;
-using scalar_type = device_detector_type::scalar_type;
+using scalar_type = traccc::default_detector::host::scalar_type;
 
+using bfield_type =
+    covfie::field<traccc::const_bfield_backend_t<scalar_type>>;
 using stepper_type =
-    detray::rk_stepper<detray::bfield::const_field_t<scalar_type>::view_t,
-                   device_detector_type::algebra_type,
-                   detray::constrained_step<scalar_type>>;
+    detray::rk_stepper<bfield_type::view_t,
+                        traccc::default_detector::host::algebra_type,
+                        detray::constrained_step<scalar_type>>;
 using navigator_type = detray::navigator<const device_detector_type>;
 using device_navigator_type = detray::navigator<const device_detector_type>;
 
@@ -172,6 +176,7 @@ private:
     traccc::seedfilter_config m_filter_config;
 
     /// further configuration
+    traccc::host::greedy_ambiguity_resolution_algorithm::config_type m_resolution_config;
     /// Configuration for the track finding
     finding_algorithm::config_type m_finding_config;
     /// Configuration for the track fitting
@@ -180,7 +185,7 @@ private:
     /// Constant B field for the (seed) track parameter estimation
     traccc::vector3 m_field_vec;
     /// Constant B field for the track finding and fitting
-    detray::bfield::const_field_t<traccc::scalar> m_field;
+    covfie::field<traccc::const_bfield_backend_t<traccc::scalar>> m_field;
 
     /// Detector description
     traccc::silicon_detector_description::host m_det_descr;
@@ -205,6 +210,8 @@ private:
     /// Track parameter estimation algorithm
     traccc::cuda::track_params_estimation m_track_parameter_estimation;
 
+    /// Resolution algorithm
+    traccc::cuda::greedy_ambiguity_resolution_algorithm m_resolution;
     /// Track finding algorithm
     finding_algorithm m_finding;
     /// Track fitting algorithm
@@ -226,10 +233,11 @@ public:
         m_finder_config(), 
         m_grid_config(m_finder_config), 
         m_filter_config(), 
+        m_resolution_config(),
         m_finding_config(), 
         m_fitting_config(), 
         m_field_vec{0.f, 0.f, m_finder_config.bFieldInZ},
-        m_field(detray::bfield::create_const_field<host_detector_type::scalar_type>(m_field_vec)),
+        m_field(traccc::construct_const_bfield<traccc::scalar>(m_field_vec)),
         m_det_descr{m_host_mr},
         m_clusterization(m_mr, m_copy, m_stream, m_clustering_config),
         m_measurement_sorting(m_mr, m_copy, m_stream, 
@@ -241,6 +249,8 @@ public:
                     logger->cloneWithSuffix("SeedingAlg")),
         m_track_parameter_estimation(m_mr, m_copy, m_stream,
             logger->cloneWithSuffix("TrackParEstAlg")),
+        m_resolution(m_resolution_config, m_mr, m_copy, m_stream,
+            logger->cloneWithSuffix("ResolutionAlg")),
         m_finding(m_finding_config, m_mr, m_copy, m_stream, 
             logger->cloneWithSuffix("TrackFindingAlg")),
         m_fitting(m_fitting_config, m_mr, m_copy, m_stream, 
@@ -317,43 +327,64 @@ TrackFittingResult TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> c
         static_cast<unsigned int>(read_out.size()), *m_cached_device_mr);
     m_copy(vecmem::get_data(read_out), cells_buffer)->ignore();
 
-    //
-    // ----------------- Clusterization -----------------
-    // 
+    // Clusterization
     const traccc::cuda::clusterization_algorithm::output_type measurements =
         m_clusterization(cells_buffer, m_device_det_descr);
     m_measurement_sorting(measurements);
     
-    //
-    // ----------------- Spacepoint Formation -----------------
-    //  
+    // Spacepoint formation
     const spacepoint_formation_algorithm::output_type spacepoints =
         m_spacepoint_formation(m_device_detector_view, measurements);
 
-    //
-    // ----------------- Seeding and track param est. -----------
-    //
+    // Seeding and track parameter estimation
+    auto seeds = m_seeding(spacepoints);
     const traccc::cuda::track_params_estimation::output_type track_params =
         m_track_parameter_estimation(measurements, spacepoints,
-                                    m_seeding(spacepoints), m_field_vec);
-    //
-    // ----------------- Finding and Fitting -----------------
-    //
+                                    seeds, m_field_vec);
+
     // track finding                        
     // Run the track finding (asynchronously).
     const finding_algorithm::output_type track_candidates = m_finding(
         m_device_detector_view, m_field, measurements, track_params);
 
+    // Run the resolution algorithm on the candidates
+    traccc::edm::track_candidate_collection<traccc::default_algebra>::buffer 
+        res_track_candidates = m_resolution({track_candidates, measurements});
+
     // Run the track fitting (asynchronously).
     const fitting_algorithm::output_type track_states = 
-        m_fitting(m_device_detector_view, m_field, track_candidates);
+        m_fitting(m_device_detector_view, m_field, 
+            {res_track_candidates, measurements});
 
-    //
     // ----------------- Return fitted track (headers) -----------------
-    // 
+    traccc::measurement_collection_types::host measurements_host;
+    traccc::edm::spacepoint_collection::host spacepoints_host{
+        m_host_mr};
+    traccc::edm::seed_collection::host seeds_host{m_host_mr};
+    traccc::bound_track_parameters_collection_types::host params_host;
+    traccc::edm::track_candidate_collection<traccc::default_algebra>::host
+        track_candidates_host{m_host_mr};
+    traccc::edm::track_candidate_collection<traccc::default_algebra>::host
+        res_track_candidates_host{m_host_mr};
 
-    // print number of fitted tracks
-    std::cout << "Number of fitted tracks: " << track_states.headers.size() << std::endl;
+    m_copy(measurements, measurements_host)->wait();
+    m_copy(spacepoints, spacepoints_host)->wait();
+    m_copy(seeds, seeds_host)->wait();
+    m_copy(track_params, params_host)->wait();
+    m_copy(track_candidates, track_candidates_host,
+            vecmem::copy::type::device_to_host)->wait();
+    m_copy(res_track_candidates, res_track_candidates_host,
+            vecmem::copy::type::device_to_host)->wait();
+
+    // print tracking statistics
+    std::cout << "Number of measurements: " << measurements_host.size() << std::endl;
+    std::cout << "Number of spacepoints: " << spacepoints_host.size() << std::endl;
+    std::cout << "Number of seeds: " << seeds_host.size() << std::endl;
+    std::cout << "Number of track parameters: " << params_host.size() << std::endl;
+    std::cout << "Number of track candidates: " << track_candidates_host.size() << std::endl;
+    std::cout << "Number of resolved track candidates: "
+              << res_track_candidates_host.size() << std::endl;
+    std::cout << "Number of track states: " << track_states.headers.size() << std::endl;
 
     // create output type
     TrackFittingResult result;
