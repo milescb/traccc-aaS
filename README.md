@@ -10,7 +10,7 @@ A minimal description of how to build a working version is detailed below. In ea
 
 ## Running out of the box
 
-The easiest way to run `traccc` as-a-Service is with our container. Pull the image at `docker.io/milescb/traccc-aas:v1.1_traccc0.21.0`, then run the image interactively. The server can be launched with:
+The easiest way to run `traccc` as-a-Service is with our container. Pull the image at `docker.io/milescb/traccc-aas:v1.1_traccc0.23.0`, then run the image interactively. The server can be launched with:
 
 ```
 tritonserver --model-repository=$MODEL_REPO
@@ -36,18 +36,19 @@ git clone --recurse-submodules git@github.com:milescb/traccc-aaS.git
 The easiest way to build the custom backend is with the docker at `docker.io/milescb/triton-server:25.02-py3_gcc13.3`. Run this interactively with
 
 ```
-shifter --module=gpu --image=milescb/tritonserver:triton-server:25.02-py3_gcc13.3
+shifterimg pull milescb/triton-server:25.02-py3_gcc13.3
+shifter --module=gpu --image=milescb/triton-server:25.02-py3_gcc13.3
 ```
 
 or use your favorite docker application and mount the appropriate directories. 
 
 ### Shared Library 
 
-To run out of the box at `nersc`, an installation of `traccc` and the the backend can be found at `/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_03202024_traccc_v0.21.0/install`. To set up the environment, run the docker then set the following environment variables
+To run out of the box at `nersc`, an installation of `traccc` and the the backend can be found at `/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_061825_tracccv0.23.0/installinstall`. To set up the environment, run the docker then set the following environment variables
 
 ```
 export DATADIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/data
-export INSTALLDIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_03202024_traccc_v0.21.0/install
+export INSTALLDIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_061825_tracccv0.23.0/installinstall
 export PATH=$INSTALLDIR/bin:$PATH
 export LD_LIBRARY_PATH=$INSTALLDIR/lib:$LD_LIBRARY_PATH
 ```
