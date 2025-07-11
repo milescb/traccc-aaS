@@ -3,7 +3,7 @@ import sys
 
 import numpy as np
 import pandas as pd
-# import tritonclient.http as httpclient
+import awkward as ak
 
 import matplotlib.pyplot as plt
 import mplhep
@@ -53,15 +53,10 @@ def main():
     inputs[1].set_data_from_numpy(input1_data)
 
     # Specify outputs
-    output_names = ["chi2", "ndf", "local_positions", "local_positions_lengths", "variances"]
     output_names = [
-        "chi2", "ndf", 
-        "local_positions", 
-        "variances",
-        "detray_ids",
-        "measurement_ids",
-        "measurement_dims",
-        "times"
+        "TRK_PARAMS",      # [n_tracks, 5] - chi2, ndf, phi, theta, qop
+        "MEASUREMENTS",    # [total_meas_with_seps, 4] - localx, localy, varx, vary with -1 separators
+        "GEOMETRY_IDS"     # [total_meas_with_seps] - geometry IDs with -1 separators
     ]
     outputs = [grpcclient.InferRequestedOutput(name) for name in output_names]
 
@@ -73,29 +68,89 @@ def main():
     )
 
     # Retrieve and process outputs
-    chi2 = result.as_numpy("chi2")
-    ndf = result.as_numpy("ndf")
-    local_positions = result.as_numpy("local_positions") 
-    variances = result.as_numpy("variances")             
-    detray_ids = result.as_numpy("detray_ids")            
-    measurement_ids = result.as_numpy("measurement_ids")  
-    measurement_dims = result.as_numpy("measurement_dims")
-    times = result.as_numpy("times")    
+    trk_params = result.as_numpy("TRK_PARAMS")       # [n_tracks, 5]
+    measurements = result.as_numpy("MEASUREMENTS")   # [total_meas_with_seps, 4]
+    geometry_ids = result.as_numpy("GEOMETRY_IDS")   # [total_meas_with_seps]
     
-    # filter data with measurement_dims = 2
-    mask = measurement_dims == 2
-    local_positions = local_positions[mask]
-    variances = variances[mask]
-    detray_ids = detray_ids[mask]
-    measurement_ids = measurement_ids[mask]
-    measurement_dims = measurement_dims[mask]
-    times = times[mask] 
+    # Extract track parameters
+    chi2 = trk_params[:, 0]
+    ndf = trk_params[:, 1]
+    phi = trk_params[:, 2]
+    theta = trk_params[:, 3]
+    qop = trk_params[:, 4]
     
+    # Parse flattened measurements and geometry IDs into awkward arrays
+    # Find separator indices (where all measurement values are -1)
+    separator_mask = (measurements[:, 0] == -1) & (measurements[:, 1] == -1) & \
+                     (measurements[:, 2] == -1) & (measurements[:, 3] == -1)
+    
+    # Get separator positions
+    separator_indices = np.where(separator_mask)[0]
+    
+    # Split measurements into tracks using separators
+    track_measurements = []
+    track_geometry_ids = []
+    
+    start_idx = 0
+    for sep_idx in separator_indices:
+        # Extract measurements for this track
+        track_meas = measurements[start_idx:sep_idx]
+        track_geo = geometry_ids[start_idx:sep_idx]
+        
+        track_measurements.append(track_meas)
+        track_geometry_ids.append(track_geo)
+        
+        start_idx = sep_idx + 1
+    
+    # Don't forget the last track (after the last separator)
+    if start_idx < len(measurements):
+        track_measurements.append(measurements[start_idx:])
+        track_geometry_ids.append(geometry_ids[start_idx:])
+    
+    # Create awkward arrays for ragged data
+    ak_measurements = ak.Array(track_measurements)  # [n_tracks][variable_meas, 4]
+    ak_geometry_ids = ak.Array(track_geometry_ids)  # [n_tracks][variable_meas]
+    
+    # Extract components as awkward arrays
+    ak_local_x = ak_measurements[:, :, 0]    # [n_tracks][variable_meas]
+    ak_local_y = ak_measurements[:, :, 1]    # [n_tracks][variable_meas]
+    ak_var_x = ak_measurements[:, :, 2]      # [n_tracks][variable_meas]
+    ak_var_y = ak_measurements[:, :, 3]      # [n_tracks][variable_meas]
+    
+    # For printing measurement dimensions
+    local_x = ak.flatten(ak_local_x)
+    measurement_dims = np.full(len(local_x), 2, dtype=np.uint32)
+    
+    print(f"Number of tracks: {len(trk_params)}")
+    print(f"Number of measurements per track: {ak.num(ak_measurements, axis=1)}")
+    print(f"Total measurements: {ak.sum(ak.num(ak_measurements, axis=1))}")
+    print(f"Track parameters shape: {trk_params.shape}")
+    print(f"Awkward measurements shape: {ak_measurements.type}")
+    print(f"Awkward geometry IDs shape: {ak_geometry_ids.type}")
+    
+    # Example: Access measurements for specific tracks
+    print(f"\nTrack 0 has {len(ak_measurements[0])} measurements:")
+    print(f"  Local positions: {ak_measurements[0][:, :2]}")
+    print(f"  Geometry IDs: {ak_geometry_ids[0]}")
+    
+    if len(ak_measurements) > 1:
+        print(f"\nTrack 1 has {len(ak_measurements[1])} measurements:")
+        print(f"  Local positions: {ak_measurements[1][:, :2]}")
+        print(f"  Geometry IDs: {ak_geometry_ids[1]}")
+    
+    # Plot histograms using flattened data
     plot_histogram(chi2, "Chi2", "Chi2")
-    plot_histogram(ndf, "NDF", "NDF")    
-    plot_histogram(local_positions[:, 0], "Local Position X", "Local Position X")
-    plot_histogram(local_positions[:, 1], "Local Position Y", "Local Position Y")    
-    plot_histogram(measurement_dims, "Measurement Dims", "Measurement Dimensions")        
+    plot_histogram(ndf, "NDF", "NDF")
+    plot_histogram(phi, "Phi", "Phi [rad]")
+    plot_histogram(theta, "Theta", "Theta [rad]")
+    plot_histogram(qop, "Q_over_P", "Charge/Momentum [1/GeV]")
+    plot_histogram(measurement_dims, "Measurement Dims", "Measurement Dimensions")
+    
+    # Additional awkward array operations
+    print(f"\nAwkward array operations:")
+    print(f"Average measurements per track: {ak.mean(ak.num(ak_measurements, axis=1)):.2f}")
+    print(f"Max measurements in any track: {ak.max(ak.num(ak_measurements, axis=1))}")
+    print(f"Min measurements in any track: {ak.min(ak.num(ak_measurements, axis=1))}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

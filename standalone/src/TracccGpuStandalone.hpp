@@ -470,6 +470,7 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
             {res_track_candidates, measurements});
 
     // Print fitting stats
+    // TODO: remove this in production code, add ability to select at initialization
     std::cout << "Number of measurements: " << measurements_per_event.size() << std::endl;
     std::cout << "Number of spacepoints: " << spacepoints_per_event.size() << std::endl;
     std::cout << "Number of seeds: " << m_copy.get_size(seeds) << std::endl;
@@ -479,7 +480,6 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
     std::cout << "Number of fitted tracks: " << track_states.headers.size() << std::endl;
 
     // copy track states to host
-    //! Expensive with so many track states
     auto track_states_host = m_copy_track_states(track_states);
 
     return track_states_host;

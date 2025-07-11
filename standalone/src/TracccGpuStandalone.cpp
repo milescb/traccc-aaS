@@ -150,6 +150,24 @@ int main(int argc, char *argv[])
                   << ", ndf = " << fit_res.trk_quality.ndf
                   << std::endl;
 
+        // Get the fitted track parameters from the fitting result
+        const auto& fitted_params = fit_res.fit_params;
+        
+        // Extract the track parameters
+        traccc::scalar phi = fitted_params.phi();
+        traccc::scalar theta = fitted_params.theta();
+        traccc::scalar qop = fitted_params.qop();
+        
+        // Calculate eta from theta
+        traccc::scalar eta = -std::log(std::tan(theta / 2.0));
+        
+        std::cout << "Track " << i << ": chi2 = " << fit_res.trk_quality.chi2
+                  << ", ndf = " << fit_res.trk_quality.ndf
+                  << ", phi = " << phi
+                  << ", eta = " << eta  
+                  << ", q/p = " << qop
+                  << std::endl;
+
         for (auto const& st : state) 
         {
             const traccc::measurement& measurement = st.get_measurement();
