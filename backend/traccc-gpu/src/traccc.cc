@@ -669,7 +669,18 @@ TRITONBACKEND_ModelInstanceExecute(
             row.push_back(static_cast<double>(double_ptr[i * num_features_clusters + j]));
         }
         input_data_clusters.push_back(row);
-        input_data_geoid.push_back(uint_geoid_ptr[i]);
+
+        // Use the mapping from Athena ID to ACTS ID to get the detray ID
+        try {
+            input_data_geoid.push_back(
+                instance_state->traccc_gpu_standalone_->getAthenaToDetrayMap().at(uint_geoid_ptr[i])
+            );
+        } catch (const std::out_of_range& e) {
+            LOG_MESSAGE(TRITONSERVER_LOG_ERROR, 
+                       ("Missing Athena ID mapping for: " + std::to_string(uint_geoid_ptr[i])).c_str());
+            // Use the original ID as fallback or handle error appropriately
+            input_data_geoid.push_back(uint_geoid_ptr[i]); 
+        }
     }
 
     int numClusters = input_data_clusters.size();
@@ -793,7 +804,18 @@ TRITONBACKEND_ModelInstanceExecute(
                 measurements_buffer.push_back(static_cast<double>(localCovariance[0])); // varx
                 measurements_buffer.push_back(static_cast<double>(localCovariance[1])); // vary
                 
-                geometry_ids_buffer.push_back(measurement.surface_link.value());
+                // Convert Detray ID back to Athena ID for output using reverse map
+                uint64_t detray_id = measurement.surface_link.value();
+                try {
+                    geometry_ids_buffer.push_back(
+                        instance_state->traccc_gpu_standalone_->getDetrayToAthenaMap().at(detray_id)
+                    );
+                } catch (const std::out_of_range& e) {
+                    LOG_MESSAGE(TRITONSERVER_LOG_ERROR, 
+                                ("Missing reverse mapping for Detray ID: " + std::to_string(detray_id)).c_str());
+                    // Fall back to Detray ID
+                    geometry_ids_buffer.push_back(detray_id);
+                }
             }
             
             // Add separator between tracks (except after last track)

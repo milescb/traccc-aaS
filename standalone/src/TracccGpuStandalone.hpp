@@ -7,7 +7,8 @@
 // CUDA include(s).
 #include <cuda_runtime.h>
 
-// #include "DataHandler.hpp"
+// local includes
+#include "TracccEdmConversion.hpp"
 
 // Project include(s).
 #include "traccc/clusterization/clustering_config.hpp"
@@ -232,6 +233,8 @@ class TracccGpuStandalone
 private:
     /// Device ID to use
     int m_device_id;
+    /// Geometry directory path
+    std::string m_geoDir;
 
     /// Logger 
     std::unique_ptr<const traccc::Logger> logger;
@@ -252,8 +255,10 @@ private:
     traccc::geometry m_surface_transforms;
     /// digitization configuration
     std::unique_ptr<traccc::digitization_config> m_digi_cfg;
-    /// barcode map
-    std::unique_ptr<std::map<std::uint64_t, detray::geometry::barcode>> m_barcode_map;
+    /// Athena to detray map
+    std::map<uint64_t, uint64_t> m_athena_to_detray_map;
+    /// Detray to Athena map (reverse mapping)
+    std::unordered_map<uint64_t, uint64_t> m_detray_to_athena_map;
 
     // program configuration 
     /// detector options
@@ -322,8 +327,10 @@ public:
     TracccGpuStandalone( 
         vecmem::host_memory_resource *host_mr,
         vecmem::cuda::device_memory_resource *device_mr,
-        int deviceID = 0) :
+        int deviceID = 0,
+        const std::string& geoDir = "/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-00/") :
             m_device_id(deviceID), 
+            m_geoDir(geoDir),
             logger(traccc::getDefaultLogger("TracccGpuStandalone", traccc::Logging::Level::INFO)),
             m_host_mr(host_mr),
             m_stream(setCudaDeviceAndGetStream(deviceID)),
@@ -388,6 +395,15 @@ public:
         const std::vector<std::uint64_t> &geometry_ids,
         const std::vector<std::vector<double>> &data);
 
+    // getters
+    const std::map<uint64_t, uint64_t>& getAthenaToDetrayMap() const {
+        return m_athena_to_detray_map;
+    }
+
+    const std::unordered_map<uint64_t, uint64_t>& getDetrayToAthenaMap() const {
+        return m_detray_to_athena_map;
+    }
+
     void initialize();
 
     traccc::track_state_container_types::host run(
@@ -405,6 +421,16 @@ void TracccGpuStandalone::initialize()
     m_detector_opts.digitization_file = "/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-00/ITk_digitization_config_with_strips.json";
     m_detector_opts.grid_file = "/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-00/ITk_DetectorBuilder_surface_grids.json";
     m_detector_opts.material_file = "";
+
+    // Load Athena-to-Detray mapping
+    std::string athenaTransformsPath = m_geoDir + "geometry_mappings.csv";
+    m_athena_to_detray_map = read_athena_to_detray_mapping(athenaTransformsPath);
+
+    // Create reverse mapping from Detray to Athena
+    m_detray_to_athena_map.reserve(m_athena_to_detray_map.size());
+    for (const auto& [athena_id, detray_id] : m_athena_to_detray_map) {
+        m_detray_to_athena_map[detray_id] = athena_id;
+    }
 
     // Read the detector description
     traccc::io::read_detector_description(

@@ -40,7 +40,7 @@ def main():
 
     # Read input data
     input_data = pd.read_csv(FLAGS.filename)
-    input0_data = input_data['detray_id'].to_numpy(dtype=np.uint64)
+    input0_data = input_data['atlas_id'].to_numpy(dtype=np.uint64)
     feature_columns = ['local_key', 'local_x', 'local_y', 'global_x', 'global_y', 'global_z', 'is_pixel']
     input1_data = input_data[feature_columns].to_numpy(dtype=np.float64)
 
@@ -174,7 +174,7 @@ if __name__ == "__main__":
         "--filename",
         type=str,
         required=False,
-        default="clusters.csv",
+        default="clusters_ath_converted.csv",
         help="Input file name. Default is clusters.csv.",
     )
     parser.add_argument(
