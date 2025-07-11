@@ -11,7 +11,9 @@
 
 // Project include(s).
 #include "traccc/clusterization/clustering_config.hpp"
+#include "traccc/ambiguity_resolution/greedy_ambiguity_resolution_algorithm.hpp"
 #include "traccc/cuda/clusterization/clusterization_algorithm.hpp"
+#include "traccc/cuda/ambiguity_resolution/greedy_ambiguity_resolution_algorithm.hpp"
 #include "traccc/cuda/clusterization/measurement_sorting_algorithm.hpp"
 #include "traccc/cuda/finding/finding_algorithm.hpp"
 #include "traccc/cuda/fitting/fitting_algorithm.hpp"
@@ -23,12 +25,11 @@
 #include "traccc/edm/track_state.hpp"
 #include "traccc/fitting/kalman_filter/kalman_fitter.hpp"
 #include "traccc/utils/algorithm.hpp"
+#include "traccc/utils/bfield.hpp"
 #include "traccc/device/container_d2h_copy_alg.hpp"
-#include "traccc/ambiguity_resolution/greedy_ambiguity_resolution_algorithm.hpp"
 
 // Detray include(s).
 #include "detray/core/detector.hpp"
-#include "detray/detectors/bfield.hpp"
 #include "detray/io/frontend/detector_reader.hpp"
 #include "detray/navigation/navigator.hpp"
 #include "detray/propagator/propagator.hpp"
@@ -134,12 +135,14 @@ struct measurement_sort_comp{
 // Type definitions
 using host_detector_type = traccc::default_detector::host;
 using device_detector_type = traccc::default_detector::device;
-using scalar_type = device_detector_type::scalar_type;
+using scalar_type = traccc::default_detector::host::scalar_type;
 
+using bfield_type =
+    covfie::field<traccc::const_bfield_backend_t<scalar_type>>;
 using stepper_type =
-    detray::rk_stepper<detray::bfield::const_field_t<scalar_type>::view_t,
-                   device_detector_type::algebra_type,
-                   detray::constrained_step<scalar_type>>;
+    detray::rk_stepper<bfield_type::view_t,
+                        traccc::default_detector::host::algebra_type,
+                        detray::constrained_step<scalar_type>>;
 using navigator_type = detray::navigator<const device_detector_type>;
 using device_navigator_type = detray::navigator<const device_detector_type>;
 
@@ -269,17 +272,17 @@ private:
     traccc::seedfilter_config m_filter_config;
 
     /// further configuration
+    /// Configuration for ambiguity resolution
+    traccc::host::greedy_ambiguity_resolution_algorithm::config_type m_resolution_config;
     /// Configuration for the track finding
     finding_algorithm::config_type m_finding_config;
     /// Configuration for the track fitting
     fitting_algorithm::config_type m_fitting_config;
-    /// Ambiguity resolution (on the host)
-    traccc::host::greedy_ambiguity_resolution_algorithm::config_type m_resolution_config;
 
     /// Constant B field for the (seed) track parameter estimation
     traccc::vector3 m_field_vec;
     /// Constant B field for the track finding and fitting
-    detray::bfield::const_field_t<traccc::scalar> m_field;
+    covfie::field<traccc::const_bfield_backend_t<traccc::scalar>> m_field;
 
     /// Detector description
     traccc::silicon_detector_description::host m_det_descr;
@@ -304,6 +307,8 @@ private:
     /// Track parameter estimation algorithm
     traccc::cuda::track_params_estimation m_track_parameter_estimation;
 
+    /// Resolution algorithm
+    traccc::cuda::greedy_ambiguity_resolution_algorithm m_resolution;
     /// Track finding algorithm
     finding_algorithm m_finding;
     /// Track fitting algorithm
@@ -312,9 +317,6 @@ private:
     // copy back!
     traccc::device::container_d2h_copy_alg<traccc::track_state_container_types>
         m_copy_track_states;
-
-    // ambiguity resolution
-    traccc::host::greedy_ambiguity_resolution_algorithm m_resolution_alg;
 
 public:
     TracccGpuStandalone( 
@@ -335,11 +337,11 @@ public:
             m_finder_config(create_and_setup_finder_config()), // Initialize m_finder_config using the helper
             m_grid_config(m_finder_config), 
             m_filter_config(), 
+            m_resolution_config(),
             m_finding_config(create_and_setup_finding_config()), 
             m_fitting_config(create_and_setup_fitting_config()), 
-            m_resolution_config(),
             m_field_vec{0.f, 0.f, m_finder_config.bFieldInZ},
-            m_field(detray::bfield::create_const_field<host_detector_type::scalar_type>(m_field_vec)),
+            m_field(traccc::construct_const_bfield<traccc::scalar>(m_field_vec)),
             m_det_descr{*m_host_mr},
             m_clusterization(m_mr, m_copy, m_stream, m_clustering_config),
             m_measurement_sorting(m_mr, m_copy, m_stream, 
@@ -351,12 +353,13 @@ public:
                         logger->cloneWithSuffix("SeedingAlg")),
             m_track_parameter_estimation(m_mr, m_copy, m_stream,
                 logger->cloneWithSuffix("TrackParEstAlg")),
+            m_resolution(m_resolution_config, m_mr, m_copy, m_stream,
+                logger->cloneWithSuffix("ResolutionAlg")),
             m_finding(m_finding_config, m_mr, m_copy, m_stream, 
                 logger->cloneWithSuffix("TrackFindingAlg")),
             m_fitting(m_fitting_config, m_mr, m_copy, m_stream, 
                 logger->cloneWithSuffix("TrackFittingAlg")),
-            m_copy_track_states(m_mr, m_copy, logger->cloneWithSuffix("TrackStateD2HCopyAlg")),
-            m_resolution_alg(m_resolution_config, m_mr, logger->cloneWithSuffix("AmbiguityResolutionAlg"))
+            m_copy_track_states(m_mr, m_copy, logger->cloneWithSuffix("TrackStateD2HCopyAlg"))
     {
         // Tell the user what device is being used.
         int device = 0;
@@ -457,27 +460,27 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
     const finding_algorithm::output_type track_candidates = m_finding(
         m_device_detector_view, m_field, measurements, track_params);
 
+     // Run the resolution algorithm on the candidates
+    traccc::edm::track_candidate_collection<traccc::default_algebra>::buffer 
+        res_track_candidates = m_resolution({track_candidates, measurements});
+
     // Run the track fitting
     const fitting_algorithm::output_type track_states = 
-        m_fitting(m_device_detector_view, m_field, track_candidates);
+        m_fitting(m_device_detector_view, m_field, 
+            {res_track_candidates, measurements});
 
     // Print fitting stats
     std::cout << "Number of measurements: " << measurements_per_event.size() << std::endl;
     std::cout << "Number of spacepoints: " << spacepoints_per_event.size() << std::endl;
     std::cout << "Number of seeds: " << m_copy.get_size(seeds) << std::endl;
     std::cout << "Number of track params: " << m_copy.get_size(track_params) << std::endl;
-    std::cout << "Number of track candidates: " << track_candidates.items.size() << std::endl;
-    std::cout << "Number of fitted tracks: " << track_states.items.size() << std::endl;
+    std::cout << "Number of track candidates: " << m_copy.get_size(track_candidates) << std::endl;
+    std::cout << "Number of resolved track candidates: " << m_copy.get_size(res_track_candidates) << std::endl;
+    std::cout << "Number of fitted tracks: " << track_states.headers.size() << std::endl;
 
     // copy track states to host
-    //! Expensive with so many gd track states
+    //! Expensive with so many track states
     auto track_states_host = m_copy_track_states(track_states);
-
-    // run ambiguity resolution
-    // TODO: this should run before fitting, but requires copy back and forth first
-    // TODO: ask traccc people about this
-    // traccc::track_state_container_types::host resolved_track_states_cuda =
-    //     m_resolution_alg(traccc::get_data(track_states_host));
 
     return track_states_host;
 }
