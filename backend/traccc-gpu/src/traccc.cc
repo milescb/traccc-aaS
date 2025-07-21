@@ -644,68 +644,60 @@ TRITONBACKEND_ModelInstanceExecute(
     uint64_t compute_start_ns = 0;
     SET_TIMESTAMP(compute_start_ns);
 
-    // Determine the number of floats in the input buffer
-    size_t num_uint_geoid = input_geoid_buffer_byte_size / sizeof(std::uint64_t);
-    size_t num_floats_clusters = input_clusters_buffer_byte_size / sizeof(double);
+    // Determine the number of objects in the input buffer
+    size_t num_uint_geoid = input_geoid_buffer_byte_size / sizeof(std::int64_t);
+    size_t num_floats_clusters = input_clusters_buffer_byte_size / sizeof(float);
 
-    // Convert the input buffer to a float pointer
-    const std::uint64_t *uint_geoid_ptr = reinterpret_cast<const std::uint64_t *>(input_geoid_buffer);
-    const double *double_ptr = reinterpret_cast<const double *>(input_clusters_buffer);
+    // convert to expected types
+    const std::int64_t *int_geoid_ptr = reinterpret_cast<const std::int64_t *>(input_geoid_buffer);
+    const float *float_ptr = reinterpret_cast<const float *>(input_clusters_buffer);
 
-    // Assuming each row in the input clusters 2D array has 7 elements as per the config
-    size_t num_features_clusters = 7;
+    // re-format
+    size_t num_features_clusters = 46;
     size_t num_rows_clusters = num_floats_clusters / num_features_clusters;
+    std::vector<std::vector<float>> input_data_clusters;
 
-    // Convert the input buffer to a 2D vector
-    std::vector<std::vector<double>> input_data_clusters;
-    std::vector<std::uint64_t> input_data_geoid;
-    input_data_geoid.reserve(num_uint_geoid);
+    size_t num_geoid_clusters = num_uint_geoid / 2;
+    std::vector<std::pair<std::int64_t, std::int64_t>> input_data_geoid;
+
+    input_data_geoid.reserve(num_geoid_clusters);
     input_data_clusters.reserve(num_rows_clusters);
 
     for (size_t i = 0; i < num_rows_clusters; ++i) {
-        std::vector<double> row;
+        std::vector<float> row;
         row.reserve(num_features_clusters);
         for (size_t j = 0; j < num_features_clusters; ++j) {
-            row.push_back(static_cast<double>(double_ptr[i * num_features_clusters + j]));
+            row.push_back(static_cast<float>(float_ptr[i * num_features_clusters + j]));
         }
         input_data_clusters.push_back(row);
 
-        // Use the mapping from Athena ID to ACTS ID to get the detray ID
-        try {
-            input_data_geoid.push_back(
-                instance_state->traccc_gpu_standalone_->getAthenaToDetrayMap().at(uint_geoid_ptr[i])
-            );
-        } catch (const std::out_of_range& e) {
-            LOG_MESSAGE(TRITONSERVER_LOG_ERROR, 
-                       ("Missing Athena ID mapping for: " + std::to_string(uint_geoid_ptr[i])).c_str());
-            // Use the original ID as fallback or handle error appropriately
-            input_data_geoid.push_back(uint_geoid_ptr[i]); 
-        }
+        input_data_geoid.emplace_back(int_geoid_ptr[i * 2], int_geoid_ptr[i * 2 + 1]);
     }
 
     int numClusters = input_data_clusters.size();
     std::cout << "Number of clusters received: " << numClusters  << std::endl;
     for (int i = 0; i < 5; ++i) {
         std::cout << "Cluster " << i << ": ";
-        std::cout << input_data_geoid[i] << " ";
+        std::cout << input_data_geoid[i].first << " ";
+        std::cout << input_data_geoid[i].second << " ";
         for (size_t j = 0; j < num_features_clusters; ++j) {
             std::cout << input_data_clusters[i][j] << " ";
         }
         std::cout << std::endl;
     }
 
+    // TODO: fix this for testing purposes! Need example data first
     // Read measurements into traccc 
-    std::vector<clusterInfo> detray_clusters = instance_state->traccc_gpu_standalone_->read_from_array(input_data_geoid, input_data_clusters);
-    std::sort(detray_clusters.begin(), detray_clusters.end(), measurement_sort_comp());
+    std::vector<InputData> data = instance_state->traccc_gpu_standalone_->read_from_array(input_data_geoid, input_data_clusters);
 
     // Initialize spacepoints and measurements for this execution run, using the instance's host_mr
     traccc::edm::spacepoint_collection::host spacepoints(instance_state->host_mr_);
     traccc::measurement_collection_types::host measurements(&instance_state->host_mr_);
 
-    // Populate spacepoints and measurements using methods from TracccGpuStandalone
-    instance_state->traccc_gpu_standalone_->read_measurements(measurements, detray_clusters, false);
-    instance_state->traccc_gpu_standalone_->read_spacepoints(spacepoints, detray_clusters, false);
-    
+    // convert to traccc types
+    inputDataToTracccMeasurements(data, spacepoints, measurements, 
+                                    instance_state->traccc_gpu_standalone_->getAthenaToDetrayMap());
+    // run the reco chain
     auto track_states = instance_state->traccc_gpu_standalone_->run(spacepoints, measurements);
 
     uint64_t compute_end_ns = 0;
@@ -739,7 +731,7 @@ TRITONBACKEND_ModelInstanceExecute(
         size_t num_tracks = track_states.size();
         
         // Combine track parameters: chi2, ndf, phi, eta, qop
-        std::vector<double> trk_params_buffer;
+        std::vector<float> trk_params_buffer;
         trk_params_buffer.reserve(num_tracks * 5);
         
         for (size_t i = 0; i < num_tracks; ++i) {
@@ -753,11 +745,11 @@ TRITONBACKEND_ModelInstanceExecute(
             traccc::scalar theta = fitted_params.theta();
             traccc::scalar qop = fitted_params.qop();
             
-            trk_params_buffer.push_back(static_cast<double>(fit_res.trk_quality.chi2));
-            trk_params_buffer.push_back(static_cast<double>(fit_res.trk_quality.ndf));
-            trk_params_buffer.push_back(static_cast<double>(phi));
-            trk_params_buffer.push_back(static_cast<double>(theta));
-            trk_params_buffer.push_back(static_cast<double>(qop));
+            trk_params_buffer.push_back(static_cast<float>(fit_res.trk_quality.chi2));
+            trk_params_buffer.push_back(static_cast<float>(fit_res.trk_quality.ndf));
+            trk_params_buffer.push_back(static_cast<float>(phi));
+            trk_params_buffer.push_back(static_cast<float>(theta));
+            trk_params_buffer.push_back(static_cast<float>(qop));
         }
         
         std::vector<int64_t> trk_params_shape = {static_cast<int64_t>(num_tracks), 5};
@@ -784,8 +776,8 @@ TRITONBACKEND_ModelInstanceExecute(
         }
         
         // Create flattened measurements buffer with separators: [total_meas_with_separators, 4]
-        std::vector<double> measurements_buffer;
-        std::vector<uint64_t> geometry_ids_buffer;
+        std::vector<float> measurements_buffer;
+        std::vector<int64_t> geometry_ids_buffer;
         measurements_buffer.reserve(total_measurements * 4);
         geometry_ids_buffer.reserve(total_measurements);
         
@@ -799,10 +791,10 @@ TRITONBACKEND_ModelInstanceExecute(
                 const std::array<float, 2> localPosition = measurement.local;
                 const std::array<float, 2> localCovariance = measurement.variance;
                 
-                measurements_buffer.push_back(static_cast<double>(localPosition[0])); // localx
-                measurements_buffer.push_back(static_cast<double>(localPosition[1])); // localy
-                measurements_buffer.push_back(static_cast<double>(localCovariance[0])); // varx
-                measurements_buffer.push_back(static_cast<double>(localCovariance[1])); // vary
+                measurements_buffer.push_back(static_cast<float>(localPosition[0])); // localx
+                measurements_buffer.push_back(static_cast<float>(localPosition[1])); // localy
+                measurements_buffer.push_back(static_cast<float>(localCovariance[0])); // varx
+                measurements_buffer.push_back(static_cast<float>(localCovariance[1])); // vary
                 
                 // Convert Detray ID back to Athena ID for output using reverse map
                 uint64_t detray_id = measurement.surface_link.value();
@@ -820,12 +812,12 @@ TRITONBACKEND_ModelInstanceExecute(
             
             // Add separator between tracks (except after last track)
             if (track_idx < num_tracks - 1) {
-                measurements_buffer.push_back(-1.0); // separator for localx
-                measurements_buffer.push_back(-1.0); // separator for localy  
-                measurements_buffer.push_back(-1.0); // separator for varx
-                measurements_buffer.push_back(-1.0); // separator for vary
+                measurements_buffer.push_back(-1.0); // local x
+                measurements_buffer.push_back(-1.0); // local y  
+                measurements_buffer.push_back(-1.0); // var x
+                measurements_buffer.push_back(-1.0); // var y
                 
-                geometry_ids_buffer.push_back(static_cast<uint64_t>(-1)); // separator for geometry ID
+                geometry_ids_buffer.push_back(0); // geometry ID
             }
         }
         

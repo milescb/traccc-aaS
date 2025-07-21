@@ -76,24 +76,7 @@
 #include "traccc/options/track_propagation.hpp"
 #include "traccc/options/track_seeding.hpp"
 
-struct clusterInfo {
-    std::uint64_t detray_id; 
-    unsigned int local_key;
-    Eigen::Vector3d globalPosition;
-    Eigen::Vector2d localPosition;
-    bool pixel;
-};
-
-struct fittingResult {
-    std::vector<float> chi2;
-    std::vector<float> ndf;
-    std::vector<std::vector<std::array<float, 2>>> local_positions;
-    std::vector<std::vector<std::array<float, 2>>> variances;
-    std::vector<std::vector<uint64_t>> detray_ids;
-    std::vector<std::vector<size_t>> measurement_ids;
-    std::vector<std::vector<unsigned int>> measurement_dims;
-    std::vector<std::vector<float>> times;
-};
+#include "DataStructures.hpp"
 
 // function to set the CUDA device and get the stream
 static traccc::cuda::stream setCudaDeviceAndGetStream(int deviceID)
@@ -116,21 +99,6 @@ static traccc::cuda::stream setCudaDeviceAndGetStream(int deviceID)
                                      cudaGetErrorString(errorCode) + ")");     \
         }                                                                      \
     } while (false)
-
-/// Comparison / ordering operator for measurements
-struct measurement_sort_comp{
-    bool operator()(clusterInfo& lhs, clusterInfo& rhs){
-
-        if (lhs.detray_id != rhs.detray_id) {
-            return lhs.detray_id < rhs.detray_id;
-        } else if (lhs.localPosition[0] != rhs.localPosition[0]) {
-            return lhs.localPosition[0] < rhs.localPosition[0];
-        } else if (lhs.localPosition[1] != rhs.localPosition[1]) {
-            return lhs.localPosition[1] < rhs.localPosition[1];
-        } 
-        return false;
-    }
-};
 
 
 // Type definitions
@@ -256,9 +224,9 @@ private:
     /// digitization configuration
     std::unique_ptr<traccc::digitization_config> m_digi_cfg;
     /// Athena to detray map
-    std::map<uint64_t, uint64_t> m_athena_to_detray_map;
+    std::map<int64_t, uint64_t> m_athena_to_detray_map;
     /// Detray to Athena map (reverse mapping)
-    std::unordered_map<uint64_t, uint64_t> m_detray_to_athena_map;
+    std::unordered_map<uint64_t, int64_t> m_detray_to_athena_map;
 
     // program configuration 
     /// detector options
@@ -391,16 +359,16 @@ public:
         traccc::measurement_collection_types::host& measurements,
         std::vector<clusterInfo>& detray_clusters, bool do_strip);
 
-    std::vector<clusterInfo> read_from_array(
-        const std::vector<std::uint64_t> &geometry_ids,
-        const std::vector<std::vector<double>> &data);
+    std::vector<InputData> read_from_array(
+        const std::vector<std::pair<int64_t, int64_t>> &geometry_ids,
+        const std::vector<std::vector<float>> &data);
 
     // getters
-    const std::map<uint64_t, uint64_t>& getAthenaToDetrayMap() const {
+    const std::map<int64_t, uint64_t>& getAthenaToDetrayMap() const {
         return m_athena_to_detray_map;
     }
 
-    const std::unordered_map<uint64_t, uint64_t>& getDetrayToAthenaMap() const {
+    const std::unordered_map<uint64_t, int64_t>& getDetrayToAthenaMap() const {
         return m_detray_to_athena_map;
     }
 
@@ -413,6 +381,7 @@ public:
     fittingResult process_fitting_results(
         const traccc::track_state_container_types::host &track_states);
 };
+
 
 void TracccGpuStandalone::initialize()
 {
@@ -588,11 +557,11 @@ void TracccGpuStandalone::read_measurements(
     }
 }
 
-std::vector<clusterInfo> TracccGpuStandalone::read_from_array(
-    const std::vector<std::uint64_t> &geometry_ids,
-    const std::vector<std::vector<double>> &data)
+std::vector<InputData> TracccGpuStandalone::read_from_array(
+    const std::vector<std::pair<int64_t, int64_t>> &geometry_ids,
+    const std::vector<std::vector<float>> &data)
 {
-    std::vector<clusterInfo> clusters;
+    std::vector<InputData> features;
 
     if (geometry_ids.size() != data.size())
     {
@@ -601,29 +570,29 @@ std::vector<clusterInfo> TracccGpuStandalone::read_from_array(
 
     for (size_t i = 0; i < data.size(); ++i) 
     {
-        const auto& row = data[i];
-        if (row.size() != 7)
-            continue; 
+        const auto& row = data.at(i);
+        const auto& geo_pair = geometry_ids.at(i);
 
-        clusterInfo cluster;
+        InputData cluster;
 
-        if (i < geometry_ids.size()) 
-        {
-            cluster.detray_id = geometry_ids[i];
-        } 
-        else 
-        {
-            continue;
-        }
+        cluster.athena_id_1 = geo_pair.first;
+        cluster.athena_id_2 = geo_pair.second;
 
-        cluster.local_key = static_cast<unsigned int>(row[0]);
-        cluster.localPosition = Eigen::Vector2d(row[1], row[2]);
-        cluster.globalPosition = Eigen::Vector3d(row[3], row[4], row[5]);
-        cluster.pixel = (row[6] != 0);
-        clusters.push_back(cluster);
+        // spacepoint info
+        cluster.sp_x = row.at(0);
+        cluster.sp_y = row.at(1);
+        cluster.sp_z = row.at(2);
+
+        //cluster info
+        cluster.loc_eta_1 = row.at(3);
+        cluster.loc_phi_1 = row.at(4);
+        cluster.loc_eta_2 = row.at(5);
+        cluster.loc_phi_2 = row.at(6);
+
+        features.push_back(cluster);
     }
 
-    return clusters;
+    return features;
 }
 
 fittingResult TracccGpuStandalone::process_fitting_results(

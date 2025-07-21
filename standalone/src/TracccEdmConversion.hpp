@@ -13,9 +13,11 @@
 #include <string>       
 #include <sstream>  
 
+#include "DataStructures.hpp"
+
 /// Structure for combined mapping CSV
 struct geometry_mapping {
-    uint64_t ath_geoid;
+    int64_t ath_geoid;
     uint64_t detray_id;
 
     DFE_NAMEDTUPLE(geometry_mapping, ath_geoid, detray_id);
@@ -28,11 +30,11 @@ inline dfe::NamedTupleCsvReader<geometry_mapping> make_mapping_reader(
 }
 
 /// Read Athena-to-Detray geometry ID mapping from combined CSV file
-inline std::map<uint64_t, uint64_t> read_athena_to_detray_mapping(
+inline std::map<int64_t, uint64_t> read_athena_to_detray_mapping(
     std::string_view filename) {
 
     auto reader = make_mapping_reader(filename);
-    std::map<uint64_t, uint64_t> result;
+    std::map<int64_t, uint64_t> result;
     geometry_mapping mapping;
 
     while (reader.read(mapping)) {
@@ -44,56 +46,68 @@ inline std::map<uint64_t, uint64_t> read_athena_to_detray_mapping(
     return result;
 }
 
-// inline void inputDataToTracccMeasurements(
-//     InputData gnnTracks,
-//     traccc::edm::spacepoint_collection::host& spacepoints,
-//     traccc::measurement_collection_types::host& measurements,
-//     const std::map<std::uint64_t, detray::geometry::barcode>& acts_id_to_barcode_map,
-//     const std::map<uint64_t, uint64_t>& athena_to_acts_map) 
-// {
-//     // First create all measurements since we need them for spacepoint linking
-//     for (size_t i = 0; i < gnnTracks.cl_x.size(); i++) {
-//         traccc::measurement meas;
-//         // Set local coordinates (eta, phi)
-//         meas.local = {gnnTracks.cl_loc_eta[i], gnnTracks.cl_loc_phi[i]};
-//         // Set variance
-//         meas.variance = {gnnTracks.cl_cov_00[i], gnnTracks.cl_cov_11[i]};
-//         // Set measurement ID (needed for linking)
-//         meas.measurement_id = i;
-//         // Set measurement dimension
-//         meas.meas_dim = gnnTracks.sp_cl2_index[i] >= 0 ? 2 : 1;
-//         // Set geometry ID
-//         // Output from GNN is Athena ID, first need to convert to ACTS ID
-//         auto it_athena_to_acts = athena_to_acts_map.find(gnnTracks.cl_module_id[i]);
-//         uint64_t acts_id = it_athena_to_acts->second;
-//         // Traccc needs detray::geometry::barcode, so we convert with final map
-//         auto it_acts_to_barcode = acts_id_to_barcode_map.find(acts_id);
-//         meas.surface_link = it_acts_to_barcode->second;
+// Comparison / ordering operator for measurements
+struct measurement_sort_comp {
+    bool operator()(const traccc::measurement& lhs, const traccc::measurement& rhs){
+
+        if (lhs.surface_link.value() != rhs.surface_link.value()) {
+            return lhs.surface_link.value() < rhs.surface_link.value();
+        } else if (lhs.local[0] != rhs.local[0]) {
+            return lhs.local[0] < rhs.local[0];
+        } else if (lhs.local[1] != rhs.local[1]) {
+            return lhs.local[1] < rhs.local[1];
+        } 
+        return false;
+    }
+};
+
+inline void inputDataToTracccMeasurements(
+    std::vector<InputData> data,
+    traccc::edm::spacepoint_collection::host& spacepoints,
+    traccc::measurement_collection_types::host& measurements,
+    const std::map<int64_t, uint64_t>& athena_to_detray_map)
+{
+
+    // First create all measurements since we need them for spacepoint linking
+    unsigned int measurement_idx = 0;
+    for (size_t i = 0; i < data.size(); i++) {
+        traccc::measurement meas;
+        meas.local = {data.at(i).loc_eta_1, data.at(i).loc_phi_1};
+        meas.variance = {0.0025, 0.0025}; // TODO may need to adjust based on actual variance
+        meas.measurement_id = measurement_idx++;
+        meas.meas_dim = data.at(i).athena_id_2 == 0 ? 1 : 2;
+        meas.surface_link = detray::geometry::barcode{athena_to_detray_map.at(data.at(i).athena_id_1)};
         
-//         measurements.push_back(meas);
-//     }
+        measurements.push_back(meas);
 
-//     // Now create spacepoints with measurement links
-//     for (size_t i = 0; i < gnnTracks.sp_x.size(); i++) {
-//         // Get measurement indices for this spacepoint
-//         unsigned int meas_idx1 = gnnTracks.sp_cl1_index.at(i);
-//         unsigned int meas_idx2 = gnnTracks.sp_cl2_index[i] >= 0 ? 
-//             gnnTracks.sp_cl2_index[i] : 
-//             traccc::edm::spacepoint_collection::host::INVALID_MEASUREMENT_INDEX;
+        if (data.at(i).athena_id_2 >= 0) {
+            // Add second measurement if available
+            traccc::measurement meas2;
+            meas2.local = {data.at(i).loc_eta_2, data.at(i).loc_phi_2};
+            meas2.variance = {0.0025, 0.0025}; // TODO may need to adjust based on actual variance
+            meas2.measurement_id = measurement_idx++;
+            meas2.meas_dim = 2; // Always 2D for this case
+            meas2.surface_link = detray::geometry::barcode{athena_to_detray_map.at(data.at(i).athena_id_2)};
 
-//         // Create spacepoint using same format as read_spacepoints
-//         spacepoints.push_back({
-//             meas_idx1,                              // First measurement index
-//             meas_idx2,                              // Second measurement index (or INVALID)
-//             {gnnTracks.sp_x[i],                     // Global position
-//              gnnTracks.sp_y[i], 
-//              gnnTracks.sp_z[i]},
-//             0.f,                                    // Variance in z
-//             0.f                                     // Variance in radius
-//         });
-//     }
+            measurements.push_back(meas2);
+        }
 
-//     // print number of spacepoints / measurements
-//     std::cout << "Number of measurements created: " << measurements.size() << std::endl;
-//     std::cout << "Number of spacepoints created: " << spacepoints.size() << std::endl;
-// }
+        // each spacepoint has one or two measurements
+        spacepoints.push_back({
+            data.at(i).athena_id_2 != 0 ? measurement_idx-1 : measurement_idx,
+            data.at(i).athena_id_2 != 0 ? measurement_idx :
+                traccc::edm::spacepoint_collection::host::INVALID_MEASUREMENT_INDEX,
+            {data.at(i).sp_x, data.at(i).sp_y, data.at(i).sp_z},
+            0.f, // Variance in z
+            0.f  // Variance in radius
+        });
+    }
+
+    // Sort the measurements
+    //? do spacepoints need to be sorted? Think not because ids already match?
+    std::sort(measurements.begin(), measurements.end(), measurement_sort_comp());
+
+    // print number of spacepoints / measurements
+    // std::cout << "Number of measurements created: " << measurements.size() << std::endl;
+    // std::cout << "Number of spacepoints created: " << spacepoints.size() << std::endl;
+}
