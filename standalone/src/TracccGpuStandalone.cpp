@@ -23,6 +23,21 @@ int main(int argc, char *argv[])
     TrackFittingResult result;
     result = standalone.run(cells);
 
+    size_t nFailedTracks = 0;
+
+    for (const auto &ndf : result.ndf)
+    {
+        if (ndf <= 0)
+        {
+            nFailedTracks++;
+        }
+    }
+
+    std::cout << "Number of fitted tracks: " << result.chi2.size() << std::endl;
+    std::cout << "Number of failed tracks: " << nFailedTracks << std::endl;
+    std::cout << "Fraction of failed tracks: " 
+        << static_cast<float>(nFailedTracks) / static_cast<float>(result.chi2.size()) << std::endl;
+
     // warm up
     // for (int i = 0; i < 1; i++)
     // {

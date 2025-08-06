@@ -10,18 +10,29 @@
 #include "traccc/cuda/clusterization/clusterization_algorithm.hpp"
 #include "traccc/cuda/clusterization/measurement_sorting_algorithm.hpp"
 #include "traccc/cuda/ambiguity_resolution/greedy_ambiguity_resolution_algorithm.hpp"
-#include "traccc/cuda/finding/finding_algorithm.hpp"
-#include "traccc/cuda/fitting/fitting_algorithm.hpp"
+#include "traccc/cuda/finding/combinatorial_kalman_filter_algorithm.hpp"
+#include "traccc/cuda/fitting/kalman_fitting_algorithm.hpp"
 #include "traccc/cuda/seeding/seeding_algorithm.hpp"
 #include "traccc/cuda/seeding/spacepoint_formation_algorithm.hpp"
 #include "traccc/cuda/seeding/track_params_estimation.hpp"
+#include "traccc/cuda/utils/make_magnetic_field.hpp"
 #include "traccc/cuda/utils/stream.hpp"
 #include "traccc/edm/silicon_cell_collection.hpp"
 #include "traccc/edm/track_state.hpp"
-#include "traccc/fitting/kalman_filter/kalman_fitter.hpp"
+#include "traccc/finding/combinatorial_kalman_filter_algorithm.hpp"
+#include "traccc/fitting/kalman_fitting_algorithm.hpp"
 #include "traccc/utils/algorithm.hpp"
-#include "traccc/utils/bfield.hpp"
 #include "traccc/device/container_d2h_copy_alg.hpp"
+
+// magnetic field include(s).
+//! for now, only use const bfield, can read from file as well
+// construct_const_bfield({0.f, 0.f, opts.value})
+#include "traccc/cuda/utils/make_magnetic_field.hpp"
+#include "traccc/bfield/magnetic_field.hpp"
+#include "traccc/bfield/construct_const_bfield.hpp"
+#include "traccc/definitions/primitives.hpp"
+#include "traccc/io/read_magnetic_field.hpp"
+#include "traccc/options/magnetic_field.hpp"
 
 // Detray include(s).
 #include "detray/core/detector.hpp"
@@ -58,6 +69,7 @@
 #include "traccc/options/track_propagation.hpp"
 #include "traccc/options/track_resolution.hpp"
 #include "traccc/options/track_seeding.hpp"
+#include "traccc/options/magnetic_field.hpp"
 
 // Command line option include(s).
 #include "traccc/options/clusterization.hpp"
@@ -92,6 +104,16 @@ static traccc::cuda::stream setCudaDeviceAndGetStream(int deviceID)
         }                                                                      \
     } while (false)
 
+traccc::magnetic_field make_magnetic_field(const traccc::opts::magnetic_field& opts) {
+    if (opts.read_from_file) {
+        traccc::magnetic_field result;
+        traccc::io::read_magnetic_field(result, "/global/homes/m/milescb/tracking/traccc-aaS-gpu/traccc/data/geometries/odd/odd-bfield.cvf", opts.format);
+        return result;
+    } else {
+        return traccc::construct_const_bfield({0.f, 0.f, opts.value});
+    }
+}
+
 std::map<std::uint64_t, std::vector<traccc::io::csv::cell>> read_deduplicated_cells(const std::vector<traccc::io::csv::cell> &cells);
 std::map<std::uint64_t, std::vector<traccc::io::csv::cell>> read_all_cells(const std::vector<traccc::io::csv::cell> &cells);
 void read_cells(traccc::edm::silicon_cell_collection::host &out, 
@@ -119,9 +141,9 @@ using spacepoint_formation_algorithm =
         traccc::default_detector::device>;
 using clustering_algorithm = traccc::cuda::clusterization_algorithm;
 using finding_algorithm =
-    traccc::cuda::finding_algorithm<stepper_type, navigator_type>;
-using fitting_algorithm = traccc::cuda::fitting_algorithm<
-    traccc::kalman_fitter<stepper_type, navigator_type>>;
+        traccc::cuda::combinatorial_kalman_filter_algorithm;
+using fitting_algorithm = 
+        traccc::cuda::kalman_fitting_algorithm;
 
 struct TrackFittingResult
 {
@@ -182,10 +204,15 @@ private:
     /// Configuration for the track fitting
     fitting_algorithm::config_type m_fitting_config;
 
-    /// Constant B field for the (seed) track parameter estimation
+    /// Magnetic field options
+    traccc::opts::magnetic_field m_bfield_opts;
+    /// host field object
+    traccc::magnetic_field m_host_field;
+    /// device field object
+    traccc::magnetic_field m_field;
+    /// const. field for the track finding and fitting
     traccc::vector3 m_field_vec;
-    /// Constant B field for the track finding and fitting
-    covfie::field<traccc::const_bfield_backend_t<traccc::scalar>> m_field;
+
 
     /// Detector description
     traccc::silicon_detector_description::host m_det_descr;
@@ -217,6 +244,9 @@ private:
     /// Track fitting algorithm
     fitting_algorithm m_fitting;
 
+    traccc::device::container_d2h_copy_alg<traccc::track_state_container_types>
+        m_copy_track_states;
+
 public:
     TracccGpuStandalone(int deviceID = 0) :
         m_device_id(deviceID), 
@@ -234,10 +264,14 @@ public:
         m_grid_config(m_finder_config), 
         m_filter_config(), 
         m_resolution_config(),
-        m_finding_config(), 
+        m_finding_config(),     
         m_fitting_config(), 
-        m_field_vec{0.f, 0.f, m_finder_config.bFieldInZ},
-        m_field(traccc::construct_const_bfield<traccc::scalar>(m_field_vec)),
+        m_bfield_opts(),
+        m_host_field(make_magnetic_field(m_bfield_opts)),
+        m_field(traccc::cuda::make_magnetic_field(
+            m_host_field,
+            traccc::cuda::magnetic_field_storage::global_memory)),
+        m_field_vec({0.f, 0.f, m_bfield_opts.value}),
         m_det_descr{m_host_mr},
         m_clusterization(m_mr, m_copy, m_stream, m_clustering_config),
         m_measurement_sorting(m_mr, m_copy, m_stream, 
@@ -254,7 +288,9 @@ public:
         m_finding(m_finding_config, m_mr, m_copy, m_stream, 
             logger->cloneWithSuffix("TrackFindingAlg")),
         m_fitting(m_fitting_config, m_mr, m_copy, m_stream, 
-            logger->cloneWithSuffix("TrackFittingAlg"))
+            logger->cloneWithSuffix("TrackFittingAlg")),
+        m_copy_track_states(m_mr, m_copy, 
+            logger->cloneWithSuffix("TrackStateD2HCopyAlg"))
     {
         // Tell the user what device is being used.
         int device = 0;
@@ -283,10 +319,10 @@ public:
 void TracccGpuStandalone::initialize()
 {
     // HACK: hard code location of detector and digitization file
-    m_detector_opts.detector_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_geometry_detray.json";
-    m_detector_opts.digitization_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-digi-geometric-config.json";
-    m_detector_opts.grid_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_surface_grids_detray.json";
-    m_detector_opts.material_file = "/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_material_detray.json";
+    m_detector_opts.detector_file = "/global/homes/m/milescb/tracking/traccc-aaS-gpu/traccc/data/geometries/odd/odd-detray_geometry_detray.json";
+    m_detector_opts.digitization_file = "/global/homes/m/milescb/tracking/traccc-aaS-gpu/traccc/data/geometries/odd/odd-digi-geometric-config.json";
+    m_detector_opts.grid_file = "/global/homes/m/milescb/tracking/traccc-aaS-gpu/traccc/data/geometries/odd/odd-detray_surface_grids_detray.json";
+    m_detector_opts.material_file = "/global/homes/m/milescb/tracking/traccc-aaS-gpu/traccc/data/geometries/odd/odd-detray_material_detray.json";
     m_detector_opts.use_detray_detector = true;
 
     // Read the detector description
@@ -327,24 +363,26 @@ TrackFittingResult TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> c
         static_cast<unsigned int>(read_out.size()), *m_cached_device_mr);
     m_copy(vecmem::get_data(read_out), cells_buffer)->ignore();
 
+    //! may need to initialize!
+
     // Clusterization
-    const traccc::cuda::clusterization_algorithm::output_type measurements =
+    traccc::measurement_collection_types::buffer measurements =
         m_clusterization(cells_buffer, m_device_det_descr);
     m_measurement_sorting(measurements);
     
     // Spacepoint formation
-    const spacepoint_formation_algorithm::output_type spacepoints =
+    traccc::edm::spacepoint_collection::buffer spacepoints =
         m_spacepoint_formation(m_device_detector_view, measurements);
 
     // Seeding and track parameter estimation
-    auto seeds = m_seeding(spacepoints);
+    traccc::edm::seed_collection::buffer seeds = m_seeding(spacepoints);
     const traccc::cuda::track_params_estimation::output_type track_params =
         m_track_parameter_estimation(measurements, spacepoints,
                                     seeds, m_field_vec);
 
     // track finding                        
     // Run the track finding (asynchronously).
-    const finding_algorithm::output_type track_candidates = m_finding(
+    traccc::edm::track_candidate_collection<traccc::default_algebra>::buffer track_candidates = m_finding(
         m_device_detector_view, m_field, measurements, track_params);
 
     // Run the resolution algorithm on the candidates
@@ -352,7 +390,7 @@ TrackFittingResult TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> c
         res_track_candidates = m_resolution({track_candidates, measurements});
 
     // Run the track fitting (asynchronously).
-    const fitting_algorithm::output_type track_states = 
+    traccc::track_state_container_types::buffer track_states = 
         m_fitting(m_device_detector_view, m_field, 
             {res_track_candidates, measurements});
 
@@ -376,6 +414,8 @@ TrackFittingResult TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> c
     m_copy(res_track_candidates, res_track_candidates_host,
             vecmem::copy::type::device_to_host)->wait();
 
+    auto track_states_host = m_copy_track_states(track_states);
+
     // print tracking statistics
     std::cout << "Number of measurements: " << measurements_host.size() << std::endl;
     std::cout << "Number of spacepoints: " << spacepoints_host.size() << std::endl;
@@ -384,16 +424,31 @@ TrackFittingResult TracccGpuStandalone::run(std::vector<traccc::io::csv::cell> c
     std::cout << "Number of track candidates: " << track_candidates_host.size() << std::endl;
     std::cout << "Number of resolved track candidates: "
               << res_track_candidates_host.size() << std::endl;
-    std::cout << "Number of track states: " << track_states.headers.size() << std::endl;
+    std::cout << "Number of fitted tracks: " << track_states_host.size() << std::endl;
+
+    size_t failed_tracks = 0;
+    for (size_t i = 0; i < track_states_host.size(); ++i)
+    {
+        const auto& [fit_res, state] = track_states_host.at(i);
+
+        // Only process and print tracks with a valid fit (ndf > 0)
+        if (fit_res.trk_quality.ndf <= 0) {
+            failed_tracks++;
+            continue;
+        }
+
+        if (i < 5) // Print only the first 5 tracks
+        {
+            std::cout << "Track " << i << ": "
+                      << "Chi2: " << fit_res.trk_quality.chi2
+                      << ", NDF: " << fit_res.trk_quality.ndf << std::endl;
+        }
+    }
+
+    std::cout << "Number of failed tracks: " << failed_tracks << std::endl;
 
     // create output type
     TrackFittingResult result;
-            
-    // // for now, only copy headers back
-    // vecmem::vector<traccc::fitting_result<algebra::plugin::array<float>>> headers(*m_mr.host);
-    // m_copy(track_states.headers, headers)->wait();
-
-    // std::cout << "Number of headers: " << headers.size() << std::endl;
 
     // if (!headers.empty()) 
     // {
