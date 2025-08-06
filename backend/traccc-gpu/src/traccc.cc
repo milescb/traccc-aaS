@@ -653,42 +653,28 @@ TRITONBACKEND_ModelInstanceExecute(
     const float *float_ptr = reinterpret_cast<const float *>(input_clusters_buffer);
 
     // re-format
-    size_t num_features_clusters = 46;
+    size_t num_features_clusters = 47;
     size_t num_rows_clusters = num_floats_clusters / num_features_clusters;
-    std::vector<std::vector<float>> input_data_clusters;
 
-    size_t num_geoid_clusters = num_uint_geoid / 2;
-    std::vector<std::pair<std::int64_t, std::int64_t>> input_data_geoid;
-
-    input_data_geoid.reserve(num_geoid_clusters);
-    input_data_clusters.reserve(num_rows_clusters);
-
-    for (size_t i = 0; i < num_rows_clusters; ++i) {
-        std::vector<float> row;
-        row.reserve(num_features_clusters);
-        for (size_t j = 0; j < num_features_clusters; ++j) {
-            row.push_back(static_cast<float>(float_ptr[i * num_features_clusters + j]));
-        }
-        input_data_clusters.push_back(row);
-
-        input_data_geoid.emplace_back(int_geoid_ptr[i * 2], int_geoid_ptr[i * 2 + 1]);
+    if ((num_uint_geoid / 2) != num_rows_clusters) {
+        LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Mismatch between number of geometry IDs and feature rows.");
+        // Handle error appropriately
     }
 
-    int numClusters = input_data_clusters.size();
-    std::cout << "Number of clusters received: " << numClusters  << std::endl;
-    for (int i = 0; i < 5; ++i) {
+    std::cout << "Number of clusters received: " << num_rows_clusters  << std::endl;
+    for (size_t i = 0; i < 5 && i < num_rows_clusters; ++i) {
         std::cout << "Cluster " << i << ": ";
-        std::cout << input_data_geoid[i].first << " ";
-        std::cout << input_data_geoid[i].second << " ";
+        std::cout << int_geoid_ptr[i * 2] << " ";
+        std::cout << int_geoid_ptr[i * 2 + 1] << " ";
         for (size_t j = 0; j < num_features_clusters; ++j) {
-            std::cout << input_data_clusters[i][j] << " ";
+            std::cout << float_ptr[i * num_features_clusters + j] << " ";
         }
         std::cout << std::endl;
     }
 
-    // TODO: fix this for testing purposes! Need example data first
     // Read measurements into traccc 
-    std::vector<InputData> data = instance_state->traccc_gpu_standalone_->read_from_array(input_data_geoid, input_data_clusters);
+    std::vector<InputData> data = instance_state->traccc_gpu_standalone_->read_from_array(
+        int_geoid_ptr, float_ptr, num_rows_clusters, num_features_clusters);
 
     // Initialize spacepoints and measurements for this execution run, using the instance's host_mr
     traccc::edm::spacepoint_collection::host spacepoints(instance_state->host_mr_);
@@ -726,21 +712,44 @@ TRITONBACKEND_ModelInstanceExecute(
     // response for that request.
 
     // Process the outputs
-    {
-        // --------------- Process 'TRK_PARAMS' ---------------
+   {
+        // --------------- Process 'TRK_PARAMS', 'MEASUREMENTS', and 'GEOMETRY_IDS' ---------------
         size_t num_tracks = track_states.size();
         
-        // Combine track parameters: chi2, ndf, phi, eta, qop
+        // Buffers for the output tensors
         std::vector<float> trk_params_buffer;
+        std::vector<float> measurements_buffer;
+        std::vector<int64_t> geometry_ids_buffer;
+
+        // Reserve memory assuming most tracks are valid to avoid reallocations
         trk_params_buffer.reserve(num_tracks * 5);
-        
+        // Measurement reservation is an estimate, actual size depends on track length
+        measurements_buffer.reserve(num_tracks * 15 * 4); 
+        geometry_ids_buffer.reserve(num_tracks * 15);
+
+        size_t num_failed_tracks = 0;
+        size_t valid_tracks_count = 0;
+        size_t printed_tracks = 0;
+
+        // process all tracks
         for (size_t i = 0; i < num_tracks; ++i) {
             const auto& [fit_res, state] = track_states.at(i);
-            
-            // Get the fitted track parameters
+
+            // Skip tracks where the fit failed
+            if (fit_res.trk_quality.ndf <= 0) {
+                num_failed_tracks++;
+                continue;
+            }
+
+            // Add separator before this track's measurements, if it's not the first valid track
+            if (valid_tracks_count > 0) {
+                measurements_buffer.insert(measurements_buffer.end(), {-1.0, -1.0, -1.0, -1.0});
+                geometry_ids_buffer.push_back(0);
+            }
+            valid_tracks_count++;
+
+            // --- Process Track Parameters ---
             const auto& fitted_params = fit_res.fit_params;
-            
-            // Extract the track parameters
             traccc::scalar phi = fitted_params.phi();
             traccc::scalar theta = fitted_params.theta();
             traccc::scalar qop = fitted_params.qop();
@@ -750,101 +759,54 @@ TRITONBACKEND_ModelInstanceExecute(
             trk_params_buffer.push_back(static_cast<float>(phi));
             trk_params_buffer.push_back(static_cast<float>(theta));
             trk_params_buffer.push_back(static_cast<float>(qop));
-        }
-        
-        std::vector<int64_t> trk_params_shape = {static_cast<int64_t>(num_tracks), 5};
-        const char* trk_params_data = reinterpret_cast<const char*>(trk_params_buffer.data());
-        
-        responder.ProcessTensor(
-            "TRK_PARAMS",
-            TRITONSERVER_TYPE_FP64,
-            trk_params_shape,
-            trk_params_data,
-            TRITONSERVER_MEMORY_CPU,
-            0 /* memory_type_id */
-        );
 
-        // --------------- Process 'MEASUREMENTS' (Flattened with separators) ---------------
-        // Count total measurements across all tracks + separators
-        size_t total_measurements = 0;
-        for (size_t i = 0; i < num_tracks; ++i) {
-            const auto& [fit_res, state] = track_states.at(i);
-            total_measurements += state.size();
-            if (i < num_tracks - 1) { // Add separator except after last track
-                total_measurements += 1; // for the -1 separator
-            }
-        }
-        
-        // Create flattened measurements buffer with separators: [total_meas_with_separators, 4]
-        std::vector<float> measurements_buffer;
-        std::vector<int64_t> geometry_ids_buffer;
-        measurements_buffer.reserve(total_measurements * 4);
-        geometry_ids_buffer.reserve(total_measurements);
-        
-        for (size_t track_idx = 0; track_idx < num_tracks; ++track_idx) {
-            const auto& [fit_res, state] = track_states.at(track_idx);
-            
-            // Add measurements for this track
-            for (size_t meas_idx = 0; meas_idx < state.size(); ++meas_idx) {
-                const traccc::measurement& measurement = state[meas_idx].get_measurement();
+            // --- Process Measurements for this track ---
+            for (const auto& st : state) {
+                const traccc::measurement& measurement = st.get_measurement();
                 
-                const std::array<float, 2> localPosition = measurement.local;
-                const std::array<float, 2> localCovariance = measurement.variance;
-                
-                measurements_buffer.push_back(static_cast<float>(localPosition[0])); // localx
-                measurements_buffer.push_back(static_cast<float>(localPosition[1])); // localy
-                measurements_buffer.push_back(static_cast<float>(localCovariance[0])); // varx
-                measurements_buffer.push_back(static_cast<float>(localCovariance[1])); // vary
-                
-                // Convert Detray ID back to Athena ID for output using reverse map
+                measurements_buffer.push_back(measurement.local[0]); // local x
+                measurements_buffer.push_back(measurement.local[1]); // local y
+                measurements_buffer.push_back(measurement.variance[0]); // var x
+                measurements_buffer.push_back(measurement.variance[1]); // var y
+
                 uint64_t detray_id = measurement.surface_link.value();
                 try {
                     geometry_ids_buffer.push_back(
-                        instance_state->traccc_gpu_standalone_->getDetrayToAthenaMap().at(detray_id)
-                    );
+                        instance_state->traccc_gpu_standalone_->getDetrayToAthenaMap().at(detray_id));
                 } catch (const std::out_of_range& e) {
                     LOG_MESSAGE(TRITONSERVER_LOG_ERROR, 
                                 ("Missing reverse mapping for Detray ID: " + std::to_string(detray_id)).c_str());
-                    // Fall back to Detray ID
-                    geometry_ids_buffer.push_back(detray_id);
+                    geometry_ids_buffer.push_back(detray_id); // Fallback
                 }
             }
-            
-            // Add separator between tracks (except after last track)
-            if (track_idx < num_tracks - 1) {
-                measurements_buffer.push_back(-1.0); // local x
-                measurements_buffer.push_back(-1.0); // local y  
-                measurements_buffer.push_back(-1.0); // var x
-                measurements_buffer.push_back(-1.0); // var y
-                
-                geometry_ids_buffer.push_back(0); // geometry ID
-            }
         }
-        
-        std::vector<int64_t> measurements_shape = {static_cast<int64_t>(total_measurements), 4};
-        const char* measurements_data = reinterpret_cast<const char*>(measurements_buffer.data());
-        
-        responder.ProcessTensor(
-            "MEASUREMENTS",
-            TRITONSERVER_TYPE_FP64,
-            measurements_shape,
-            measurements_data,
-            TRITONSERVER_MEMORY_CPU,
-            0 /* memory_type_id */
-        );
 
-        // --------------- Process 'GEOMETRY_IDS' (Flattened with separators) ---------------
-        std::vector<int64_t> geometry_ids_shape = {static_cast<int64_t>(total_measurements)};
-        const char* geometry_ids_data = reinterpret_cast<const char*>(geometry_ids_buffer.data());
-        
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_INFO,
+            ("Total tracks processed: " + std::to_string(num_tracks) + 
+             ", Valid tracks: " + std::to_string(valid_tracks_count) + 
+             ", Failed tracks: " + std::to_string(num_failed_tracks)).c_str());
+
+        // --- Send 'TRK_PARAMS' tensor ---
+        std::vector<int64_t> trk_params_shape = {static_cast<int64_t>(valid_tracks_count), 5};
         responder.ProcessTensor(
-            "GEOMETRY_IDS",
-            TRITONSERVER_TYPE_UINT64,
-            geometry_ids_shape,
-            geometry_ids_data,
-            TRITONSERVER_MEMORY_CPU,
-            0 /* memory_type_id */
-        );
+            "TRK_PARAMS", TRITONSERVER_TYPE_FP32, trk_params_shape,
+            reinterpret_cast<const char*>(trk_params_buffer.data()),
+            TRITONSERVER_MEMORY_CPU, 0);
+
+        // --- Send 'MEASUREMENTS' tensor ---
+        std::vector<int64_t> measurements_shape = {static_cast<int64_t>(measurements_buffer.size() / 4), 4};
+        responder.ProcessTensor(
+            "MEASUREMENTS", TRITONSERVER_TYPE_FP32, measurements_shape,
+            reinterpret_cast<const char*>(measurements_buffer.data()),
+            TRITONSERVER_MEMORY_CPU, 0);
+
+        // --- Send 'GEOMETRY_IDS' tensor ---
+        std::vector<int64_t> geometry_ids_shape = {static_cast<int64_t>(geometry_ids_buffer.size())};
+        responder.ProcessTensor(
+            "GEOMETRY_IDS", TRITONSERVER_TYPE_INT64, geometry_ids_shape,
+            reinterpret_cast<const char*>(geometry_ids_buffer.data()),
+            TRITONSERVER_MEMORY_CPU, 0);
     }
 
     // Finalize the responder. If 'true' is returned, the output

@@ -18,6 +18,9 @@ struct InputData {
     int64_t athena_id_1;
     int64_t athena_id_2;
 
+    int local_key_1;
+    int local_key_2;
+
     float r;
     float phi;
     float eta;
@@ -60,13 +63,13 @@ struct InputData {
     float cluster;
 };
 
-struct clusterInfo {
-    std::uint64_t detray_id; 
-    unsigned int local_key;
-    Eigen::Vector3d globalPosition;
-    Eigen::Vector2d localPosition;
-    bool pixel;
-};
+// struct clusterInfo {
+//     std::uint64_t detray_id; 
+//     unsigned int local_key;
+//     Eigen::Vector3d globalPosition;
+//     Eigen::Vector2d localPosition;
+//     bool pixel;
+// };
 
 struct fittingResult {
     std::vector<float> chi2;

@@ -61,53 +61,172 @@ struct measurement_sort_comp {
     }
 };
 
-inline void inputDataToTracccMeasurements(
-    std::vector<InputData> data,
-    traccc::edm::spacepoint_collection::host& spacepoints,
+// Comparison / ordering operator for measurements
+struct inputData_sort_comp {
+    bool operator()(const InputData& lhs, const InputData& rhs){
+
+        if (lhs.athena_id_1 != rhs.athena_id_1) {
+            return lhs.athena_id_1 < rhs.athena_id_1;
+        } else if (lhs.loc_eta_1 != rhs.loc_eta_1) {
+            return lhs.loc_eta_1 < rhs.loc_eta_1;
+        } else if (lhs.loc_phi_1 != rhs.loc_phi_1) {
+            return lhs.loc_phi_1 < rhs.loc_phi_1;
+        }
+        return false;
+    }
+};
+
+inline void read_input_data(
     traccc::measurement_collection_types::host& measurements,
-    const std::map<int64_t, uint64_t>& athena_to_detray_map)
-{
+    traccc::edm::spacepoint_collection::host& spacepoints,
+    std::vector<InputData>& data, 
+    const std::map<int64_t, uint64_t>& athena_to_detray_map,
+    bool do_strip = false
+) {
 
-    // First create all measurements since we need them for spacepoint linking
-    unsigned int measurement_idx = 0;
     for (size_t i = 0; i < data.size(); i++) {
-        traccc::measurement meas;
-        meas.local = {data.at(i).loc_eta_1, data.at(i).loc_phi_1};
-        meas.variance = {0.0025, 0.0025}; // TODO may need to adjust based on actual variance
-        meas.measurement_id = measurement_idx++;
-        meas.meas_dim = data.at(i).athena_id_2 == 0 ? 1 : 2;
-        meas.surface_link = detray::geometry::barcode{athena_to_detray_map.at(data.at(i).athena_id_1)};
-        
-        measurements.push_back(meas);
 
-        if (data.at(i).athena_id_2 >= 0) {
-            // Add second measurement if available
-            traccc::measurement meas2;
-            meas2.local = {data.at(i).loc_eta_2, data.at(i).loc_phi_2};
-            meas2.variance = {0.0025, 0.0025}; // TODO may need to adjust based on actual variance
-            meas2.measurement_id = measurement_idx++;
-            meas2.meas_dim = 2; // Always 2D for this case
-            meas2.surface_link = detray::geometry::barcode{athena_to_detray_map.at(data.at(i).athena_id_2)};
-
-            measurements.push_back(meas2);
+        if (data.at(i).athena_id_2 != 0) {
+            continue;
         }
 
-        // each spacepoint has one or two measurements
+        InputData cluster = data.at(i);
+
+        auto it = athena_to_detray_map.find(data.at(i).athena_id_1);
+        if (it == athena_to_detray_map.end()) {
+            std::cerr << "Warning: athena_id_1 " << data.at(i).athena_id_1
+                      << " not found in mapping at index " << i << std::endl;
+            continue;
+        }
+        uint64_t geometry_id = it->second;
+
+        // Construct the measurement object.
+        traccc::measurement meas;
+        std::array<detray::dsize_type<traccc::default_algebra>, 2u> indices{0u, 0u};
+        meas.meas_dim = 0u;
+        for (unsigned int ipar = 0; ipar < 2u; ++ipar) {
+            if (((cluster.local_key_1) & (1 << (ipar + 1))) != 0) {
+
+                switch (ipar) {
+                    case 0: {
+                        meas.local[0] = cluster.loc_eta_1;
+                        meas.variance[0] = 0.0025;
+                        indices[meas.meas_dim++] = ipar;
+                    }; break;
+                    case 1: {
+                        meas.local[1] = cluster.loc_phi_1;
+                        meas.variance[1] = 0.0025;
+                        indices[meas.meas_dim++] = ipar;
+                    }; break;
+                }
+            }
+        }
+
+        meas.subs.set_indices(indices);
+        meas.surface_link = detray::geometry::barcode{geometry_id};
+
+        // Keeps measurement_id for ambiguity resolution
+        meas.measurement_id = i;
+        measurements.push_back(meas);
+
+        // fill spacepoints
         spacepoints.push_back({
-            data.at(i).athena_id_2 != 0 ? measurement_idx-1 : measurement_idx,
-            data.at(i).athena_id_2 != 0 ? measurement_idx :
-                traccc::edm::spacepoint_collection::host::INVALID_MEASUREMENT_INDEX,
+            static_cast<unsigned int>(i),
+            traccc::edm::spacepoint_collection::host::INVALID_MEASUREMENT_INDEX,
             {data.at(i).sp_x, data.at(i).sp_y, data.at(i).sp_z},
             0.f, // Variance in z
             0.f  // Variance in radius
         });
+
+    }
+}
+
+
+inline void inputDataToTracccMeasurements(
+    std::vector<InputData> data,
+    traccc::edm::spacepoint_collection::host& spacepoints,
+    traccc::measurement_collection_types::host& measurements,
+    const std::map<int64_t, uint64_t>& athena_to_detray_map
+) {
+
+    // First create all measurements since we need them for spacepoint linking
+    unsigned int measurement_idx = 0;
+    for (size_t i = 0; i < data.size(); i++) {
+
+        if (data.at(i).athena_id_2 != 0) {
+            continue; // Skip entries with athena_id_2 != 0
+        }
+
+        try {
+            traccc::measurement meas;
+            meas.local = {data.at(i).loc_eta_1, data.at(i).loc_phi_1};
+            meas.variance = {0.0025, 0.0025}; // TODO may need to adjust based on actual variance
+            meas.measurement_id = measurement_idx++;
+            meas.meas_dim = data.at(i).athena_id_2 == 0 ? 1 : 2;
+            
+            // Check if athena_id_1 exists in the mapping
+            auto it = athena_to_detray_map.find(data.at(i).athena_id_1);
+            if (it == athena_to_detray_map.end()) {
+                std::cerr << "Warning: athena_id_1 " << data.at(i).athena_id_1 
+                          << " not found in mapping at index " << i << std::endl;
+                continue;
+            }
+            meas.surface_link = detray::geometry::barcode{it->second};
+            
+            measurements.push_back(meas);
+
+            if (data.at(i).athena_id_2 > 0) {
+                try {
+                    // Add second measurement if available
+                    traccc::measurement meas2;
+                    meas2.local = {data.at(i).loc_eta_2, data.at(i).loc_phi_2};
+                    meas2.variance = {0.0025, 0.0025}; // TODO may need to adjust based on actual variance
+                    meas2.measurement_id = measurement_idx++;
+                    meas2.meas_dim = 2; // Always 2D for this case
+                    
+                    // Check if athena_id_2 exists in the mapping
+                    auto it2 = athena_to_detray_map.find(data.at(i).athena_id_2);
+                    if (it2 == athena_to_detray_map.end()) {
+                        std::cerr << "Warning: athena_id_2 " << data.at(i).athena_id_2 
+                                  << " not found in mapping at index " << i << std::endl;
+                        measurement_idx--; // Revert the increment since we're not adding this measurement
+                    } else {
+                        meas2.surface_link = detray::geometry::barcode{it2->second};
+                        measurements.push_back(meas2);
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "Error creating second measurement at index " << i 
+                              << ": " << e.what() << std::endl;
+                    measurement_idx--; // Revert the increment
+                }
+            }
+
+            // each spacepoint has one or two measurements
+            try {
+                spacepoints.push_back({
+                    data.at(i).athena_id_2 > 0 ? measurement_idx-1 : measurement_idx,
+                    data.at(i).athena_id_2 > 0 ? measurement_idx :
+                        traccc::edm::spacepoint_collection::host::INVALID_MEASUREMENT_INDEX,
+                    {data.at(i).sp_x, data.at(i).sp_y, data.at(i).sp_z},
+                    0.f, // Variance in z
+                    0.f  // Variance in radius
+                });
+            } catch (const std::exception& e) {
+                std::cerr << "Error creating spacepoint at index " << i 
+                          << ": " << e.what() << std::endl;
+            }
+
+        } catch (const std::out_of_range& e) {
+            std::cerr << "Out of range error at index " << i << ": " << e.what() << std::endl;
+            continue;
+        } catch (const std::exception& e) {
+            std::cerr << "Error processing data at index " << i << ": " << e.what() << std::endl;
+            continue;
+        }
     }
 
     // Sort the measurements
     //? do spacepoints need to be sorted? Think not because ids already match?
     std::sort(measurements.begin(), measurements.end(), measurement_sort_comp());
 
-    // print number of spacepoints / measurements
-    // std::cout << "Number of measurements created: " << measurements.size() << std::endl;
-    // std::cout << "Number of spacepoints created: " << spacepoints.size() << std::endl;
 }

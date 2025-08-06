@@ -40,14 +40,26 @@ def main():
 
     # Read input data
     input_data = pd.read_csv(FLAGS.filename)
-    input0_data = input_data['atlas_id'].to_numpy(dtype=np.uint64)
-    feature_columns = ['local_key', 'local_x', 'local_y', 'global_x', 'global_y', 'global_z', 'is_pixel']
-    input1_data = input_data[feature_columns].to_numpy(dtype=np.float64)
+    
+    geo_id_columns = ['geoid_1', 'geoid_2']
+    input0_data = input_data[geo_id_columns].to_numpy(dtype=np.int64)
+    
+    feature_columns = [
+        'x', 'y', 'z', 'loc_eta_1', 'loc_phi_1', 'loc_eta_2', 'loc_phi_2',
+        'r', 'phi', 'eta', 'cluster_x_1', 'cluster_y_1', 'cluster_z_1', 
+        'cluster_x_2', 'cluster_y_2', 'cluster_z_2', 'count_1', 'charge_count_1',
+        'localDir0_1', 'localDir1_1', 'localDir2_1', 'lengthDir0_1', 'lengthDir1_1', 'lengthDir2_1',
+        'glob_eta_1', 'glob_phi_1', 'eta_angle_1', 'phi_angle_1', 'count_2', 'charge_count_2',
+        'localDir0_2', 'localDir1_2', 'localDir2_2', 'lengthDir0_2', 'lengthDir1_2', 'lengthDir2_2',
+        'glob_eta_2', 'glob_phi_2', 'eta_angle_2', 'phi_angle_2', 'cluster_r_1', 'cluster_phi_1',
+        'cluster_eta_1', 'cluster_r_2', 'cluster_phi_2', 'cluster_eta_2', 'cluster'
+    ]
+    input1_data = input_data[feature_columns].to_numpy(dtype=np.float32)
 
     # Prepare inputs
     inputs = [
-        grpcclient.InferInput("GEOMETRY_ID", input0_data.shape, "UINT64"),
-        grpcclient.InferInput("FEATURES", input1_data.shape, "FP64")
+        grpcclient.InferInput("GEOMETRY_IDS", input0_data.shape, "INT64"),
+        grpcclient.InferInput("FEATURES", input1_data.shape, "FP32")
     ]
     inputs[0].set_data_from_numpy(input0_data)
     inputs[1].set_data_from_numpy(input1_data)
@@ -56,7 +68,7 @@ def main():
     output_names = [
         "TRK_PARAMS",      # [n_tracks, 5] - chi2, ndf, phi, theta, qop
         "MEASUREMENTS",    # [total_meas_with_seps, 4] - localx, localy, varx, vary with -1 separators
-        "GEOMETRY_IDS"     # [total_meas_with_seps] - geometry IDs with -1 separators
+        "GEOMETRY_IDS"     # [total_meas_with_seps] - geometry IDs with 0 separators
     ]
     outputs = [grpcclient.InferRequestedOutput(name) for name in output_names]
 
@@ -174,7 +186,7 @@ if __name__ == "__main__":
         "--filename",
         type=str,
         required=False,
-        default="clusters_ath_converted.csv",
+        default="traccc_input.csv",
         help="Input file name. Default is clusters.csv.",
     )
     parser.add_argument(

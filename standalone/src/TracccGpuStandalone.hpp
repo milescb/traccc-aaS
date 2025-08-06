@@ -351,17 +351,11 @@ public:
     // default destructor
     ~TracccGpuStandalone() = default;
 
-    void read_spacepoints(
-        traccc::edm::spacepoint_collection::host& spacepoints,
-        std::vector<clusterInfo>& detray_clusters, bool do_strip);
-
-    void read_measurements(
-        traccc::measurement_collection_types::host& measurements,
-        std::vector<clusterInfo>& detray_clusters, bool do_strip);
-
     std::vector<InputData> read_from_array(
-        const std::vector<std::pair<int64_t, int64_t>> &geometry_ids,
-        const std::vector<std::vector<float>> &data);
+        const int64_t* geometry_ids,
+        const float* data,
+        size_t num_rows,
+        size_t num_features);
 
     // getters
     const std::map<int64_t, uint64_t>& getAthenaToDetrayMap() const {
@@ -378,8 +372,6 @@ public:
         traccc::edm::spacepoint_collection::host spacepoints_per_event,
         traccc::measurement_collection_types::host measurements_per_event);
 
-    fittingResult process_fitting_results(
-        const traccc::track_state_container_types::host &track_states);
 };
 
 
@@ -480,161 +472,39 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
     return track_states_host;
 }
 
-void TracccGpuStandalone::read_spacepoints(
-    traccc::edm::spacepoint_collection::host& spacepoints,
-    std::vector<clusterInfo>& detray_clusters, bool do_strip)
-{
-    traccc::measurement_collection_types::host measurements;
-    read_measurements(measurements, detray_clusters, do_strip);
-
-    std::map<traccc::geometry_id, unsigned int> m;
-    for(std::vector<clusterInfo>::size_type i = 0; i < detray_clusters.size();i++){
-        clusterInfo cluster = detray_clusters[i];
-        if(do_strip && cluster.pixel){continue;}
-
-        // Construct the local 3D(2D) position of the measurement.
-        // traccc::measurement meas;
-        // meas = measurements[i];
-
-        spacepoints.push_back({static_cast<unsigned int>(i), 
-            traccc::edm::spacepoint_collection::host::INVALID_MEASUREMENT_INDEX,
-            {static_cast<float>(cluster.globalPosition[0]),
-            static_cast<float>(cluster.globalPosition[1]),
-            static_cast<float>(cluster.globalPosition[2])},
-            0.f, 0.f});
-    }
-}
-
-
-void TracccGpuStandalone::read_measurements(
-    traccc::measurement_collection_types::host& measurements,
-    std::vector<clusterInfo>& detray_clusters, bool do_strip)
-{
-    std::map<traccc::geometry_id, unsigned int> m;
-    std::multimap<uint64_t,detray::geometry::barcode> sf_seen;
-
-    for(std::vector<clusterInfo>::size_type i = 0; i < detray_clusters.size();i++){
-
-        clusterInfo cluster = detray_clusters[i];
-        if(do_strip && cluster.pixel){continue;}
-
-        uint64_t geometry_id = cluster.detray_id;
-        const auto& sf = detray::geometry::barcode{geometry_id};
-        const detray::tracking_surface surface{*m_detector, sf};
-        cluster.localPosition[0] = cluster.localPosition.x();
-        cluster.localPosition[1] = cluster.localPosition.y();
-
-        // ATH_MSG_INFO("Traccc measurement at index " << i << ": " << cluster.localPosition[0] << "," << cluster.localPosition[1]);
-
-        // Construct the measurement object.
-        traccc::measurement meas;
-        std::array<detray::dsize_type<traccc::default_algebra>, 2u> indices{0u, 0u};
-        meas.meas_dim = 0u;
-        for (unsigned int ipar = 0; ipar < 2u; ++ipar) {
-            if (((cluster.local_key) & (1 << (ipar + 1))) != 0) {
-
-                switch (ipar) {
-                    case 0: {
-                        meas.local[0] = cluster.localPosition.x();
-                        meas.variance[0] = 0.0025;
-                        indices[meas.meas_dim++] = ipar;
-                    }; break;
-                    case 1: {
-                        meas.local[1] = cluster.localPosition.y();
-                        meas.variance[1] = 0.0025;
-                        indices[meas.meas_dim++] = ipar;
-                    }; break;
-                }
-            }
-        }
-
-        meas.subs.set_indices(indices);
-        meas.surface_link = detray::geometry::barcode{geometry_id};
-
-        // Keeps measurement_id for ambiguity resolution
-        meas.measurement_id = i;
-        measurements.push_back(meas);
-    }
-}
-
 std::vector<InputData> TracccGpuStandalone::read_from_array(
-    const std::vector<std::pair<int64_t, int64_t>> &geometry_ids,
-    const std::vector<std::vector<float>> &data)
+    const int64_t* geometry_ids,
+    const float* data,
+    size_t num_rows,
+    size_t num_features)
 {
     std::vector<InputData> features;
+    features.reserve(num_rows);
 
-    if (geometry_ids.size() != data.size())
+    for (size_t i = 0; i < num_rows; ++i) 
     {
-        throw std::runtime_error("Number of geometry IDs and data rows do not match.");
-    }
-
-    for (size_t i = 0; i < data.size(); ++i) 
-    {
-        const auto& row = data.at(i);
-        const auto& geo_pair = geometry_ids.at(i);
+        const float* row = &data[i * num_features];
 
         InputData cluster;
 
-        cluster.athena_id_1 = geo_pair.first;
-        cluster.athena_id_2 = geo_pair.second;
+        cluster.athena_id_1 = geometry_ids[i * 2];
+        cluster.athena_id_2 = geometry_ids[i * 2 + 1];
 
         // spacepoint info
-        cluster.sp_x = row.at(0);
-        cluster.sp_y = row.at(1);
-        cluster.sp_z = row.at(2);
+        cluster.sp_x = row[0];
+        cluster.sp_y = row[1];
+        cluster.sp_z = row[2];
 
         //cluster info
-        cluster.loc_eta_1 = row.at(3);
-        cluster.loc_phi_1 = row.at(4);
-        cluster.loc_eta_2 = row.at(5);
-        cluster.loc_phi_2 = row.at(6);
+        cluster.loc_eta_1 = row[3];
+        cluster.loc_phi_1 = row[4];
+        cluster.loc_eta_2 = row[5];
+        cluster.loc_phi_2 = row[6];
 
         features.push_back(cluster);
     }
 
     return features;
-}
-
-fittingResult TracccGpuStandalone::process_fitting_results(
-    const traccc::track_state_container_types::host &track_states)
-{
-    fittingResult result;
-
-    for (size_t i = 0; i < track_states.size(); ++i) {
-
-        const auto& [fit_res, state] = track_states.at(i);
-
-        result.chi2.push_back(fit_res.trk_quality.chi2);
-        result.ndf.push_back(fit_res.trk_quality.ndf);
-
-        std::vector<std::array<float, 2>> local_positions;
-        std::vector<std::array<float, 2>> variances;
-        std::vector<uint64_t> detray_ids;
-        std::vector<size_t> measurement_ids;
-        std::vector<unsigned int> measurement_dims;
-        std::vector<float> times;
-
-        for (const auto& st : state) {
-
-            const traccc::measurement& meas = st.get_measurement();
-
-            local_positions.push_back(meas.local);
-            variances.push_back(meas.variance);
-            detray_ids.push_back(meas.surface_link.value());
-            measurement_ids.push_back(meas.measurement_id);
-            measurement_dims.push_back(meas.meas_dim);
-            times.push_back(meas.time);
-        }
-
-        result.local_positions.push_back(local_positions);
-        result.variances.push_back(variances);
-        result.detray_ids.push_back(detray_ids);
-        result.measurement_ids.push_back(measurement_ids);
-        result.measurement_dims.push_back(measurement_dims);
-        result.times.push_back(times);
-    }
-
-    return result;
 }
 
 #endif 
