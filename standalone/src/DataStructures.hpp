@@ -71,6 +71,17 @@ struct InputData {
 //     bool pixel;
 // };
 
+struct TracccCell {
+    
+    int64_t geometry_id = 0;
+    int64_t measurement_id = 0;
+    int64_t channel0 = 0;
+    int64_t channel1 = 0;
+    float timestamp = 0.f;
+    float value = 0.f;
+
+};
+
 struct fittingResult {
     std::vector<float> chi2;
     std::vector<float> ndf;

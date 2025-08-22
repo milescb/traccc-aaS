@@ -161,13 +161,13 @@ class ModelState : public BackendModel {
   virtual ~ModelState() = default;
 
     // Name of the input and output tensor
-    const std::string &InputGeoIdTensorName() const { return input_geoid_name_; }
-    const std::string &InputCellsTensorName() const { return input_clusters_name_; }
+    const std::string &InputCellPositionsTensorName() const { return input_cell_positions_name_; }
+    const std::string &InputCellPropertiesTensorName() const { return input_cell_properties_name_; }
     const std::string &OutputTensorName() const { return output_name_; }
 
     // Datatype of the input and output tensor
-    TRITONSERVER_DataType InputGeoIdTensorDataType() const { return input_geoid_datatype_; }
-    TRITONSERVER_DataType InputCellsTensorDataType() const { return input_clusters_datatype_; }
+    TRITONSERVER_DataType InputCellPositionsTensorDataType() const { return input_cell_positions_datatype_; }
+    TRITONSERVER_DataType InputCellPropertiesTensorDataType() const { return input_cell_properties_datatype_; }
     TRITONSERVER_DataType OutputTensorDataType() const
     {
         return output_datatype_;
@@ -184,13 +184,13 @@ class ModelState : public BackendModel {
     // until the model is completely loaded and initialized, including
     // all instances of the model. In practice, this means that backend
     // should only call it in TRITONBACKEND_ModelInstanceExecute.
-    const std::vector<int64_t> &InputGeoIdTensorNonBatchShape() const
+    const std::vector<int64_t> &InputCellPositionsTensorNonBatchShape() const
     {
-        return input_geoid_nb_shape_;
+        return input_cell_positions_nb_shape_;
     }
-    const std::vector<int64_t> &InputCellsTensorNonBatchShape() const
+    const std::vector<int64_t> &InputCellPropertiesTensorNonBatchShape() const
     {
-        return input_clusters_nb_shape_;
+        return input_cell_properties_nb_shape_;
     }
     const std::vector<int64_t> &OutputTensorNonBatchShape() const
     {
@@ -206,18 +206,18 @@ class ModelState : public BackendModel {
  private:
   ModelState(TRITONBACKEND_Model* triton_model);
 
-    std::string input_geoid_name_;
-    std::string input_clusters_name_;
+    std::string input_cell_positions_name_;
+    std::string input_cell_properties_name_;
     std::string output_name_;
 
-    TRITONSERVER_DataType input_geoid_datatype_;
-    TRITONSERVER_DataType input_clusters_datatype_;
+    TRITONSERVER_DataType input_cell_positions_datatype_;
+    TRITONSERVER_DataType input_cell_properties_datatype_;
     TRITONSERVER_DataType output_datatype_;
 
-    std::vector<int64_t> input_geoid_nb_shape_;
-    std::vector<int64_t> input_clusters_nb_shape_;
-    std::vector<int64_t> input_geoid_shape_;
-    std::vector<int64_t> input_clusters_shape_;
+    std::vector<int64_t> input_cell_positions_nb_shape_;
+    std::vector<int64_t> input_cell_properties_nb_shape_;
+    std::vector<int64_t> input_cell_positions_shape_;
+    std::vector<int64_t> input_cell_properties_shape_;
     std::vector<int64_t> output_nb_shape_;
     std::vector<int64_t> output_shape_;
 
@@ -269,7 +269,7 @@ ModelState::ValidateModelConfig()
     RETURN_IF_ERROR(ModelConfig().MemberAsArray("input", &inputs));
     RETURN_IF_ERROR(ModelConfig().MemberAsArray("output", &outputs));
 
-        // The model must have exactly 2 inputs and 1 output.
+    // The model must have exactly 2 inputs and 3 output.
     RETURN_ERROR_IF_FALSE(
         inputs.ArraySize() == 2, TRITONSERVER_ERROR_INVALID_ARG,
         std::string("model configuration must have 2 inputs"));
@@ -277,18 +277,18 @@ ModelState::ValidateModelConfig()
         outputs.ArraySize() == 3, TRITONSERVER_ERROR_INVALID_ARG,
         std::string("model configuration must have 3 outputs"));
 
-    common::TritonJson::Value input_geoid, input_clusters, output;
-    RETURN_IF_ERROR(inputs.IndexAsObject(0, &input_geoid));
-    RETURN_IF_ERROR(inputs.IndexAsObject(1, &input_clusters));
+    common::TritonJson::Value input_cell_positions, input_cell_properties, output;
+    RETURN_IF_ERROR(inputs.IndexAsObject(0, &input_cell_positions));
+    RETURN_IF_ERROR(inputs.IndexAsObject(1, &input_cell_properties));
     RETURN_IF_ERROR(outputs.IndexAsObject(0, &output));
 
     // Record the input and output name in the model state.
-    const char *input_geoid_name, *input_clusters_name;
-    size_t input_geoid_len, input_clusters_len;
-    RETURN_IF_ERROR(input_geoid.MemberAsString("name", &input_geoid_name, &input_geoid_len));
-    RETURN_IF_ERROR(input_clusters.MemberAsString("name", &input_clusters_name, &input_clusters_len));
-    input_geoid_name_ = std::string(input_geoid_name);
-    input_clusters_name_ = std::string(input_clusters_name);
+    const char *input_cell_positions_name, *input_cell_properties_name;
+    size_t input_cell_positions_len, input_cell_properties_len;
+    RETURN_IF_ERROR(input_cell_positions.MemberAsString("name", &input_cell_positions_name, &input_cell_positions_len));
+    RETURN_IF_ERROR(input_cell_properties.MemberAsString("name", &input_cell_properties_name, &input_cell_properties_len));
+    input_cell_positions_name_ = std::string(input_cell_positions_name);
+    input_cell_properties_name_ = std::string(input_cell_properties_name);
 
     const char *output_name;
     size_t output_name_len;
@@ -297,25 +297,25 @@ ModelState::ValidateModelConfig()
     output_name_ = std::string(output_name);
 
     // Input and output must have same datatype
-    std::string input_geoid_dtype, input_clusters_dtype, output_dtype;
-    RETURN_IF_ERROR(input_geoid.MemberAsString("data_type", &input_geoid_dtype));
-    RETURN_IF_ERROR(input_clusters.MemberAsString("data_type", &input_clusters_dtype));
+    std::string input_cell_positions_dtype, input_cell_properties_dtype, output_dtype;
+    RETURN_IF_ERROR(input_cell_positions.MemberAsString("data_type", &input_cell_positions_dtype));
+    RETURN_IF_ERROR(input_cell_properties.MemberAsString("data_type", &input_cell_properties_dtype));
     RETURN_IF_ERROR(output.MemberAsString("data_type", &output_dtype));
     // RETURN_ERROR_IF_FALSE(
     //     input_dtype == output_dtype, TRITONSERVER_ERROR_INVALID_ARG,
     //     std::string("expected input and output datatype to match, got ") +
     //         input_dtype + " and " + output_dtype);
-    input_geoid_datatype_ = ModelConfigDataTypeToTritonServerDataType(input_geoid_dtype);
-    input_clusters_datatype_ = ModelConfigDataTypeToTritonServerDataType(input_clusters_dtype);
+    input_cell_positions_datatype_ = ModelConfigDataTypeToTritonServerDataType(input_cell_positions_dtype);
+    input_cell_properties_datatype_ = ModelConfigDataTypeToTritonServerDataType(input_cell_properties_dtype);
     output_datatype_ = ModelConfigDataTypeToTritonServerDataType(output_dtype);
 
-    std::vector<int64_t> input_geoid_shape, input_clusters_shape, output_shape;
-    RETURN_IF_ERROR(backend::ParseShape(input_geoid, "dims", &input_geoid_shape));
-    RETURN_IF_ERROR(backend::ParseShape(input_clusters, "dims", &input_clusters_shape));
+    std::vector<int64_t> input_cell_positions_shape, input_cell_properties_shape, output_shape;
+    RETURN_IF_ERROR(backend::ParseShape(input_cell_positions, "dims", &input_cell_positions_shape));
+    RETURN_IF_ERROR(backend::ParseShape(input_cell_properties, "dims", &input_cell_properties_shape));
     RETURN_IF_ERROR(backend::ParseShape(output, "dims", &output_shape));
 
-    input_geoid_nb_shape_ = input_geoid_shape;
-    input_clusters_nb_shape_ = input_clusters_shape;
+    input_cell_positions_nb_shape_ = input_cell_positions_shape;
+    input_cell_properties_nb_shape_ = input_cell_properties_shape;
     output_nb_shape_ = output_shape;
 
     return nullptr; // success
@@ -601,26 +601,26 @@ TRITONBACKEND_ModelInstanceExecute(
     std::vector<std::pair<TRITONSERVER_MemoryType, int64_t>> allowed_input_types =
         {{TRITONSERVER_MEMORY_CPU_PINNED, 0}, {TRITONSERVER_MEMORY_CPU, 0}};
 
-    const char *input_geoid_buffer, *input_clusters_buffer;
-    size_t input_geoid_buffer_byte_size, input_clusters_buffer_byte_size;
-    TRITONSERVER_MemoryType input_geoid_buffer_memory_type, input_clusters_buffer_memory_type;
-    int64_t input_geoid_buffer_memory_type_id, input_clusters_buffer_memory_type_id;
+    const char *input_cell_positions_buffer, *input_cell_properties_buffer;
+    size_t input_cell_positions_buffer_byte_size, input_cell_properties_buffer_byte_size;
+    TRITONSERVER_MemoryType input_cell_positions_buffer_memory_type, input_cell_properties_buffer_memory_type;
+    int64_t input_cell_positions_buffer_memory_type_id, input_cell_properties_buffer_memory_type_id;
 
     RESPOND_ALL_AND_SET_NULL_IF_ERROR(
         responses, request_count,
         collector.ProcessTensor(
-            model_state->InputGeoIdTensorName().c_str(), nullptr /* existing_buffer */,
-            0 /* existing_buffer_byte_size */, allowed_input_types, &input_geoid_buffer,
-            &input_geoid_buffer_byte_size, &input_geoid_buffer_memory_type,
-            &input_geoid_buffer_memory_type_id));
+            model_state->InputCellPositionsTensorName().c_str(), nullptr /* existing_buffer */,
+            0 /* existing_buffer_byte_size */, allowed_input_types, &input_cell_positions_buffer,
+            &input_cell_positions_buffer_byte_size, &input_cell_positions_buffer_memory_type,
+            &input_cell_positions_buffer_memory_type_id));
 
     RESPOND_ALL_AND_SET_NULL_IF_ERROR(
         responses, request_count,
         collector.ProcessTensor(
-            model_state->InputCellsTensorName().c_str(), nullptr /* existing_buffer */,
-            0 /* existing_buffer_byte_size */, allowed_input_types, &input_clusters_buffer,
-            &input_clusters_buffer_byte_size, &input_clusters_buffer_memory_type,
-            &input_clusters_buffer_memory_type_id));
+            model_state->InputCellPropertiesTensorName().c_str(), nullptr /* existing_buffer */,
+            0 /* existing_buffer_byte_size */, allowed_input_types, &input_cell_properties_buffer,
+            &input_cell_properties_buffer_byte_size, &input_cell_properties_buffer_memory_type,
+            &input_cell_properties_buffer_memory_type_id));
 
     // Finalize the collector. If 'true' is returned, 'input_buffer'
     // will not be valid until the backend synchronizes the CUDA
@@ -645,46 +645,35 @@ TRITONBACKEND_ModelInstanceExecute(
     SET_TIMESTAMP(compute_start_ns);
 
     // Determine the number of objects in the input buffer
-    size_t num_uint_geoid = input_geoid_buffer_byte_size / sizeof(std::int64_t);
-    size_t num_floats_clusters = input_clusters_buffer_byte_size / sizeof(float);
+    size_t num_cells = input_cell_positions_buffer_byte_size / (sizeof(std::int64_t) * 4);
+    size_t num_props = input_cell_properties_buffer_byte_size / (sizeof(float) * 2);
 
     // convert to expected types
-    const std::int64_t *int_geoid_ptr = reinterpret_cast<const std::int64_t *>(input_geoid_buffer);
-    const float *float_ptr = reinterpret_cast<const float *>(input_clusters_buffer);
+    const std::int64_t *cell_positions_ptr = reinterpret_cast<const std::int64_t *>(input_cell_positions_buffer);
+    const float *cell_properties_ptr = reinterpret_cast<const float *>(input_cell_properties_buffer);
 
-    // re-format
-    size_t num_features_clusters = 47;
-    size_t num_rows_clusters = num_floats_clusters / num_features_clusters;
-
-    if ((num_uint_geoid / 2) != num_rows_clusters) {
-        LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Mismatch between number of geometry IDs and feature rows.");
-        // Handle error appropriately
+    if (num_cells != num_props) {
+        LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Mismatch between number of cell positions and cell properties.");
     }
 
-    std::cout << "Number of clusters received: " << num_rows_clusters  << std::endl;
-    for (size_t i = 0; i < 5 && i < num_rows_clusters; ++i) {
-        std::cout << "Cluster " << i << ": ";
-        std::cout << int_geoid_ptr[i * 2] << " ";
-        std::cout << int_geoid_ptr[i * 2 + 1] << " ";
-        for (size_t j = 0; j < num_features_clusters; ++j) {
-            std::cout << float_ptr[i * num_features_clusters + j] << " ";
-        }
-        std::cout << std::endl;
+    std::cout << "Number of cells received: " << num_cells  << std::endl;
+    for (size_t i = 0; i < 5 && i < num_cells; ++i) {
+        std::cout << "Cell " << i << ": ";
+        std::cout << "pos=[";
+        std::cout << cell_positions_ptr[i * 4] << ", ";
+        std::cout << cell_positions_ptr[i * 4 + 1] << ", ";
+        std::cout << cell_positions_ptr[i * 4 + 2] << ", ";
+        std::cout << cell_positions_ptr[i * 4 + 3] << "], props=[";
+        std::cout << cell_properties_ptr[i * 2] << ", ";
+        std::cout << cell_properties_ptr[i * 2 + 1] << "]" << std::endl;
     }
 
     // Read measurements into traccc 
-    std::vector<InputData> data = instance_state->traccc_gpu_standalone_->read_from_array(
-        int_geoid_ptr, float_ptr, num_rows_clusters, num_features_clusters);
+    std::vector<traccc::io::csv::cell> cells = instance_state->traccc_gpu_standalone_->read_from_array(
+        cell_positions_ptr, cell_properties_ptr, num_cells, true);
 
-    // Initialize spacepoints and measurements for this execution run, using the instance's host_mr
-    traccc::edm::spacepoint_collection::host spacepoints(instance_state->host_mr_);
-    traccc::measurement_collection_types::host measurements(&instance_state->host_mr_);
-
-    // convert to traccc types
-    inputDataToTracccMeasurements(data, spacepoints, measurements, 
-                                    instance_state->traccc_gpu_standalone_->getAthenaToDetrayMap());
     // run the reco chain
-    auto track_states = instance_state->traccc_gpu_standalone_->run(spacepoints, measurements);
+    auto track_states = instance_state->traccc_gpu_standalone_->run(cells);
 
     uint64_t compute_end_ns = 0;
     SET_TIMESTAMP(compute_end_ns);
@@ -712,7 +701,7 @@ TRITONBACKEND_ModelInstanceExecute(
     // response for that request.
 
     // Process the outputs
-   {
+    {
         // --------------- Process 'TRK_PARAMS', 'MEASUREMENTS', and 'GEOMETRY_IDS' ---------------
         size_t num_tracks = track_states.size();
         
@@ -721,32 +710,21 @@ TRITONBACKEND_ModelInstanceExecute(
         std::vector<float> measurements_buffer;
         std::vector<int64_t> geometry_ids_buffer;
 
-        // Reserve memory assuming most tracks are valid to avoid reallocations
         trk_params_buffer.reserve(num_tracks * 5);
         // Measurement reservation is an estimate, actual size depends on track length
         measurements_buffer.reserve(num_tracks * 15 * 4); 
         geometry_ids_buffer.reserve(num_tracks * 15);
 
-        size_t num_failed_tracks = 0;
-        size_t valid_tracks_count = 0;
-        size_t printed_tracks = 0;
 
         // process all tracks
         for (size_t i = 0; i < num_tracks; ++i) {
             const auto& [fit_res, state] = track_states.at(i);
 
-            // Skip tracks where the fit failed
-            if (fit_res.trk_quality.ndf <= 0) {
-                num_failed_tracks++;
-                continue;
-            }
-
-            // Add separator before this track's measurements, if it's not the first valid track
-            if (valid_tracks_count > 0) {
+            // Add separator before this track's measurements, if it's not the first track
+            if (i > 0) {
                 measurements_buffer.insert(measurements_buffer.end(), {-1.0, -1.0, -1.0, -1.0});
                 geometry_ids_buffer.push_back(0);
             }
-            valid_tracks_count++;
 
             // --- Process Track Parameters ---
             const auto& fitted_params = fit_res.fit_params;
@@ -781,14 +759,8 @@ TRITONBACKEND_ModelInstanceExecute(
             }
         }
 
-        LOG_MESSAGE(
-            TRITONSERVER_LOG_INFO,
-            ("Total tracks processed: " + std::to_string(num_tracks) + 
-             ", Valid tracks: " + std::to_string(valid_tracks_count) + 
-             ", Failed tracks: " + std::to_string(num_failed_tracks)).c_str());
-
         // --- Send 'TRK_PARAMS' tensor ---
-        std::vector<int64_t> trk_params_shape = {static_cast<int64_t>(valid_tracks_count), 5};
+        std::vector<int64_t> trk_params_shape = {static_cast<int64_t>(num_tracks), 5};
         responder.ProcessTensor(
             "TRK_PARAMS", TRITONSERVER_TYPE_FP32, trk_params_shape,
             reinterpret_cast<const char*>(trk_params_buffer.data()),

@@ -2,14 +2,14 @@ backend: "traccc"
 max_batch_size: 0
 input [
    {
-    name: "GEOMETRY_IDS"
+    name: "CELL_POSITIONS"
     data_type: TYPE_INT64
-    dims: [ -1, 2 ]
+    dims: [ -1, 4 ]
   },
   {
-    name: "FEATURES"
+    name: "CELL_PROPERTIES"
     data_type: TYPE_FP32
-    dims: [ -1, 47 ]
+    dims: [ -1, 2 ]
   }
 ]
 output [

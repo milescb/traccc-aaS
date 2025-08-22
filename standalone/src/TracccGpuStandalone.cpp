@@ -1,227 +1,26 @@
 #include "TracccGpuStandalone.hpp"
 
-std::vector<InputData> read_clusters_from_csv(
-    const std::string& filename)
+std::vector<traccc::io::csv::cell> read_csv(const std::string &filename)
 {
-    std::vector<InputData> input_data;
-    std::ifstream file(filename);
+    std::vector<traccc::io::csv::cell> cells;
+    auto reader = traccc::io::csv::make_cell_reader(filename);
+    traccc::io::csv::cell iocell;
 
-    if (!file.is_open()) {
-        throw std::runtime_error("Could not open file: " + filename);
-    }
+    std::cout << "Reading cells from " << filename << std::endl;
 
-    std::string line;
-    // Read and discard the header line
-    if (!std::getline(file, line)) {
-         throw std::runtime_error("Could not read header line from file: " + filename);
-    }
-
-    // Read data lines
-    while (std::getline(file, line)) {
-        std::stringstream ss(line);
-        std::string field;
-        InputData data;
-        int col_index = 0;
-
-        try {
-            // Read each field separated by a comma
-            while (std::getline(ss, field, ',')) {
-                // Trim leading/trailing whitespace
-                field.erase(0, field.find_first_not_of(" \t\n\r\f\v"));
-                field.erase(field.find_last_not_of(" \t\n\r\f\v") + 1);
-
-                switch (col_index) {
-                    case 0: // geoid_1
-                        data.athena_id_1 = std::stoll(field);
-                        break;
-                    case 1: // geoid_2
-                        data.athena_id_2 = std::stoll(field);
-                        break;
-                    case 2: // local_key_1
-                        data.local_key_1 = std::stoi(field);
-                        break;
-                    case 3: // local_key_2
-                        data.local_key_2 = std::stoi(field);
-                        break;
-                    case 4: // x
-                        data.sp_x = std::stof(field);
-                        break;
-                    case 5: // y
-                        data.sp_y = std::stof(field);
-                        break;
-                    case 6: // z
-                        data.sp_z = std::stof(field);
-                        break;
-                    case 7: // loc_eta_1
-                        data.loc_eta_1 = std::stof(field);
-                        break;
-                    case 8: // loc_phi_1
-                        data.loc_phi_1 = std::stof(field);
-                        break;
-                    case 9: // loc_eta_2
-                        data.loc_eta_2 = std::stof(field);
-                        break;
-                    case 10: // loc_phi_2
-                        data.loc_phi_2 = std::stof(field);
-                        break;
-                    case 11: // r
-                        data.r = std::stof(field);
-                        break;
-                    case 12: // phi
-                        data.phi = std::stof(field);
-                        break;
-                    case 13: // eta
-                        data.eta = std::stof(field);
-                        break;
-                    case 14: // cluster_x_1
-                        data.cluster_x_1 = std::stof(field);
-                        break;
-                    case 15: // cluster_y_1
-                        data.cluster_y_1 = std::stof(field);
-                        break;
-                    case 16: // cluster_z_1
-                        data.cluster_z_1 = std::stof(field);
-                        break;
-                    case 17: // cluster_x_2
-                        data.cluster_x_2 = std::stof(field);
-                        break;
-                    case 18: // cluster_y_2
-                        data.cluster_y_2 = std::stof(field);
-                        break;
-                    case 19: // cluster_z_2
-                        data.cluster_z_2 = std::stof(field);
-                        break;
-                    case 20: // count_1
-                        data.count_1 = std::stof(field);
-                        break;
-                    case 21: // charge_count_1
-                        data.charge_count_1 = std::stof(field);
-                        break;
-                    case 22: // localDir0_1
-                        data.localDir0_1 = std::stof(field);
-                        break;
-                    case 23: // localDir1_1
-                        data.localDir1_1 = std::stof(field);
-                        break;
-                    case 24: // localDir2_1
-                        data.localDir2_1 = std::stof(field);
-                        break;
-                    case 25: // lengthDir0_1
-                        data.lengthDir0_1 = std::stof(field);
-                        break;
-                    case 26: // lengthDir1_1
-                        data.lengthDir1_1 = std::stof(field);
-                        break;
-                    case 27: // lengthDir2_1
-                        data.lengthDir2_1 = std::stof(field);
-                        break;
-                    case 28: // glob_eta_1
-                        data.glob_eta_1 = std::stof(field);
-                        break;
-                    case 29: // glob_phi_1
-                        data.glob_phi_1 = std::stof(field);
-                        break;
-                    case 30: // eta_angle_1
-                        data.eta_angle_1 = std::stof(field);
-                        break;
-                    case 31: // phi_angle_1
-                        data.phi_angle_1 = std::stof(field);
-                        break;
-                    case 32: // count_2
-                        data.count_2 = std::stof(field);
-                        break;
-                    case 33: // charge_count_2
-                        data.charge_count_2 = std::stof(field);
-                        break;
-                    case 34: // localDir0_2
-                        data.localDir0_2 = std::stof(field);
-                        break;
-                    case 35: // localDir1_2
-                        data.localDir1_2 = std::stof(field);
-                        break;
-                    case 36: // localDir2_2
-                        data.localDir2_2 = std::stof(field);
-                        break;
-                    case 37: // lengthDir0_2
-                        data.lengthDir0_2 = std::stof(field);
-                        break;
-                    case 38: // lengthDir1_2
-                        data.lengthDir1_2 = std::stof(field);
-                        break;
-                    case 39: // lengthDir2_2
-                        data.lengthDir2_2 = std::stof(field);
-                        break;
-                    case 40: // glob_eta_2
-                        data.glob_eta_2 = std::stof(field);
-                        break;
-                    case 41: // glob_phi_2
-                        data.glob_phi_2 = std::stof(field);
-                        break;
-                    case 42: // eta_angle_2
-                        data.eta_angle_2 = std::stof(field);
-                        break;
-                    case 43: // phi_angle_2
-                        data.phi_angle_2 = std::stof(field);
-                        break;
-                    case 44: // cluster_r_1
-                        data.cluster_r_1 = std::stof(field);
-                        break;
-                    case 45: // cluster_phi_1
-                        data.cluster_phi_1 = std::stof(field);
-                        break;
-                    case 46: // cluster_eta_1
-                        data.cluster_eta_1 = std::stof(field);
-                        break;
-                    case 47: // cluster_r_2
-                        data.cluster_r_2 = std::stof(field);
-                        break;
-                    case 48: // cluster_phi_2
-                        data.cluster_phi_2 = std::stof(field);
-                        break;
-                    case 49: // cluster_eta_2
-                        data.cluster_eta_2 = std::stof(field);
-                        break;
-                    case 50: // cluster
-                        data.cluster = std::stof(field);
-                        break;
-                    default:
-                        // Handle unexpected extra columns if necessary
-                        break;
-                }
-                col_index++;
-            }
-            // Check if we read the expected number of columns
-            if (col_index != 51) {
-                 std::cerr << "Warning: Row has " << col_index << " columns, expected 51. Line: " << line << std::endl;
-                 continue;
-            }
-
-            input_data.push_back(data);
-
-        } catch (const std::invalid_argument& e) {
-            std::cerr << "Warning: Invalid argument during conversion for line: " << line << ". Error: " << e.what() << std::endl;
-            continue;
-        } catch (const std::out_of_range& e) {
-            std::cerr << "Warning: Out of range during conversion for line: " << line << ". Error: " << e.what() << std::endl;
+    while (reader.read(iocell))
+    {
+        if (iocell.geometry_id == 0)
+        {   
+            std::cout << "Warning: Found cell with geometry_id = 0, "
+                      << "this may indicate an issue with the input data." 
+                      << std::endl;
             continue;
         }
+        cells.push_back(iocell);
     }
 
-    file.close();
-
-    // print first 5 entries to ensure they are read correctly
-    std::cout << "Read " << input_data.size() << " entries from file." << std::endl;
-    for (size_t i = 0; i < std::min(input_data.size(), size_t(5)); ++i) {
-        std::cout << "Entry " << i << ": "
-                  << "geoid_1: " << input_data[i].athena_id_1
-                  << ", geoid_2: " << input_data[i].athena_id_2
-                  << ", spacepoint: (" << input_data[i].sp_x << ", " << input_data[i].sp_y << ", " << input_data[i].sp_z << ")"
-                  << ", loc_eta_1: " << input_data[i].loc_eta_1
-                  << ", loc_phi_1: " << input_data[i].loc_phi_1
-                  << std::endl;
-    }
-
-    return input_data;
+    return cells;
 }
 
 int main(int argc, char *argv[])
@@ -244,20 +43,10 @@ int main(int argc, char *argv[])
     
     TracccGpuStandalone traccc_gpu(&host_mr, &device_mr, deviceID);
    
-    traccc::edm::spacepoint_collection::host spacepoints(host_mr);
-    traccc::measurement_collection_types::host measurements(&host_mr);
-
-    std::vector<InputData> input_data = read_clusters_from_csv(event_file);
-    std::sort(input_data.begin(), input_data.end(), inputData_sort_comp());
-    
-    // inputDataToTracccMeasurements(
-    //     input_data, spacepoints, measurements, 
-    //     traccc_gpu.getAthenaToDetrayMap());
-
-    read_input_data(measurements, spacepoints, input_data, traccc_gpu.getAthenaToDetrayMap());
+    std::vector<traccc::io::csv::cell> cells = read_csv(event_file);
 
     // run the traccc algorithm
-    auto traccc_result = traccc_gpu.run(spacepoints, measurements);
+    auto traccc_result = traccc_gpu.run(cells);
 
     // print out results
     size_t printed_tracks = 0;
