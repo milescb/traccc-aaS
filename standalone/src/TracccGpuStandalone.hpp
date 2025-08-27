@@ -435,7 +435,7 @@ void TracccGpuStandalone::initialize()
     m_detector_opts.material_file = m_geoDir + "/ITk_detector_material.json";
 
     // Load Athena-to-Detray mapping
-    std::string athenaTransformsPath = m_geoDir + "geometry_mappings.csv";
+    std::string athenaTransformsPath = m_geoDir + "/athenaIdentifierToDetrayMap.txt";
     m_athena_to_detray_map = read_athena_to_detray_mapping(athenaTransformsPath);
 
     // Create reverse mapping from Detray to Athena
