@@ -740,10 +740,13 @@ TRITONBACKEND_ModelInstanceExecute(
 
             // --- Process Measurements for this track ---
             for (const auto& st : state) {
-                const traccc::measurement& measurement = st.get_measurement();
+                const auto& smoothed_params = st.smoothed();
+                const auto& measurement = st.get_measurement();
                 
-                measurements_buffer.push_back(measurement.local[0]); // local x
-                measurements_buffer.push_back(measurement.local[1]); // local y
+                // Use the smoothed local position
+                measurements_buffer.push_back(smoothed_params.bound_local()[0]); // local x
+                measurements_buffer.push_back(smoothed_params.bound_local()[1]); // local y
+                // Use the original measurement variance
                 measurements_buffer.push_back(measurement.variance[0]); // var x
                 measurements_buffer.push_back(measurement.variance[1]); // var y
 
