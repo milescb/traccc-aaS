@@ -1,7 +1,10 @@
 #include "TracccGpuStandalone.hpp"
 
-std::vector<traccc::io::csv::cell> read_csv(const std::string &filename)
-{
+std::vector<traccc::io::csv::cell> read_csv(
+    const std::string &filename,
+    const std::map<int64_t, uint64_t> athenaToDetrayMap,
+    bool athenaIDs = false
+) {
     std::vector<traccc::io::csv::cell> cells;
     auto reader = traccc::io::csv::make_cell_reader(filename);
     traccc::io::csv::cell iocell;
@@ -17,6 +20,11 @@ std::vector<traccc::io::csv::cell> read_csv(const std::string &filename)
                       << std::endl;
             continue;
         }
+
+        if (athenaIDs) {
+            iocell.geometry_id = athenaToDetrayMap.at(iocell.geometry_id);
+        } 
+
         cells.push_back(iocell);
     }
 
@@ -43,24 +51,17 @@ int main(int argc, char *argv[])
     
     TracccGpuStandalone traccc_gpu(&host_mr, &device_mr, deviceID);
    
-    std::vector<traccc::io::csv::cell> cells = read_csv(event_file);
+    std::vector<traccc::io::csv::cell> cells = read_csv(
+        event_file, traccc_gpu.getAthenaToDetrayMap(), true);
 
     // run the traccc algorithm
     auto traccc_result = traccc_gpu.run(cells);
 
     // print out results
-    size_t printed_tracks = 0;
-    size_t failed_tracks = 0;
+    int printed_tracks = 0;
     for (size_t i = 0; i < traccc_result.size() && printed_tracks < 5; ++i)
     {
         const auto& [fit_res, state] = traccc_result.at(i);
-
-        // Only process and print tracks with a valid fit (ndf > 0)
-        if (fit_res.trk_quality.ndf <= 0) {
-            failed_tracks++;
-            continue;
-        }
-        printed_tracks++;
 
         std::cout << "Track " << i << ": chi2 = " << fit_res.trk_quality.chi2
                   << ", ndf = " << fit_res.trk_quality.ndf
@@ -105,12 +106,9 @@ int main(int argc, char *argv[])
                       << ", Measurement Dimension: " << measDim
                       << std::endl;
         }
-    }
 
-    std::cout << "Total tracks processed: " << traccc_result.size() 
-              << ", Printed tracks: " << printed_tracks 
-              << ", Failed tracks (no valid fit): " << failed_tracks 
-              << std::endl;
+        ++printed_tracks;
+    }
 
     return 0;
 }

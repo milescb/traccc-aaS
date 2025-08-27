@@ -19,8 +19,7 @@ def plot_histogram(data, name, xlabel, bins=50):
     plt.figure(figsize=(8, 8))
     plt.hist(data, bins=bins, histtype='step', label=name)
     plt.xlabel(xlabel)
-    plt.ylabel("Frequency")
-    plt.legend()
+    plt.ylabel("Events")
     plt.tight_layout()
     plt.yscale('log')
     plt.savefig(f"plots/{name.replace(" ", "_")}.png")
@@ -38,28 +37,17 @@ def main():
         print("channel creation failed: " + str(e))
         sys.exit(1)
 
-    # Read input data
     input_data = pd.read_csv(FLAGS.filename)
     
-    geo_id_columns = ['geoid_1', 'geoid_2']
-    input0_data = input_data[geo_id_columns].to_numpy(dtype=np.int64)
-    
-    feature_columns = [
-        'x', 'y', 'z', 'loc_eta_1', 'loc_phi_1', 'loc_eta_2', 'loc_phi_2',
-        'r', 'phi', 'eta', 'cluster_x_1', 'cluster_y_1', 'cluster_z_1', 
-        'cluster_x_2', 'cluster_y_2', 'cluster_z_2', 'count_1', 'charge_count_1',
-        'localDir0_1', 'localDir1_1', 'localDir2_1', 'lengthDir0_1', 'lengthDir1_1', 'lengthDir2_1',
-        'glob_eta_1', 'glob_phi_1', 'eta_angle_1', 'phi_angle_1', 'count_2', 'charge_count_2',
-        'localDir0_2', 'localDir1_2', 'localDir2_2', 'lengthDir0_2', 'lengthDir1_2', 'lengthDir2_2',
-        'glob_eta_2', 'glob_phi_2', 'eta_angle_2', 'phi_angle_2', 'cluster_r_1', 'cluster_phi_1',
-        'cluster_eta_1', 'cluster_r_2', 'cluster_phi_2', 'cluster_eta_2', 'cluster'
-    ]
-    input1_data = input_data[feature_columns].to_numpy(dtype=np.float32)
+    cell_positions_columns = ['geometry_id', 'measurement_id', 'channel0', 'channel1']
+    cell_properties_columns = ['timestamp', 'value']
 
-    # Prepare inputs
+    input0_data = input_data[cell_positions_columns].to_numpy(dtype=np.int64)
+    input1_data = input_data[cell_properties_columns].to_numpy(dtype=np.float32)
+
     inputs = [
-        grpcclient.InferInput("GEOMETRY_IDS", input0_data.shape, "INT64"),
-        grpcclient.InferInput("FEATURES", input1_data.shape, "FP32")
+        grpcclient.InferInput("CELL_POSITIONS", input0_data.shape, "INT64"),
+        grpcclient.InferInput("CELL_PROPERTIES", input1_data.shape, "FP32")
     ]
     inputs[0].set_data_from_numpy(input0_data)
     inputs[1].set_data_from_numpy(input1_data)
@@ -156,7 +144,6 @@ def main():
     plot_histogram(phi, "Phi", "Phi [rad]")
     plot_histogram(theta, "Theta", "Theta [rad]")
     plot_histogram(qop, "Q_over_P", "Charge/Momentum [1/GeV]")
-    plot_histogram(measurement_dims, "Measurement Dims", "Measurement Dimensions")
     
     # Additional awkward array operations
     print(f"\nAwkward array operations:")
@@ -186,8 +173,8 @@ if __name__ == "__main__":
         "--filename",
         type=str,
         required=False,
-        default="traccc_input.csv",
-        help="Input file name. Default is clusters.csv.",
+        default="event000000000-cells.csv",
+        help="Input file name. Default is event000000000-cells.csv",
     )
     parser.add_argument(
         "-a",
