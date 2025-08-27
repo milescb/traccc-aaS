@@ -2,12 +2,9 @@ FROM docker.io/milescb/triton-server:25.02-py3_gcc13.3
 
 # install traccc
 WORKDIR /traccc
-# copy geometry files to container
-COPY odd_configuration ./odd/
-# build and install traccc
-RUN mkdir build install
+RUN mkdir build install itk-geometry
 RUN git clone https://github.com/acts-project/traccc.git 
-RUN cd traccc && git checkout v0.21.0
+RUN cd traccc && git checkout 71ef2b5e
 WORKDIR /traccc/build
 RUN cmake -DCMAKE_INSTALL_PREFIX=../install ../traccc \
         -DCMAKE_BUILD_TYPE=Release \
@@ -22,19 +19,13 @@ ENV LD_LIBRARY_PATH=/traccc/install/lib:$LD_LIBRARY_PATH
 
 # install custom backend
 WORKDIR /traccc-aaS
-RUN git clone https://github.com/milescb/traccc-aaS.git
+RUN git clone https://github.com/milescb/traccc-aaS.git && cd traccc-aaS/ && git checkout itk-hits-to-tracks
 
 # Replace hard-coded paths in TracccGpuStandalone.hpp with local paths in docker
-RUN sed -i 's|/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_geometry_detray.json|/traccc/odd/odd-detray_geometry_detray.json|g' \
-                /traccc-aaS/traccc-aaS/standalone/src/TracccGpuStandalone.hpp
-RUN sed -i 's|/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-digi-geometric-config.json|/traccc/odd/odd-digi-geometric-config.json|g' \
-                /traccc-aaS/traccc-aaS/standalone/src/TracccGpuStandalone.hpp
-RUN sed -i 's|/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_surface_grids_detray.json|/traccc/odd/odd-detray_surface_grids_detray.json|g' \
-                /traccc-aaS/traccc-aaS/standalone/src/TracccGpuStandalone.hpp
-RUN sed -i 's|/global/cfs/projectdirs/m3443/data/traccc-aaS/data/geometries/odd/odd-detray_material_detray.json|/traccc/odd/odd-detray_material_detray.json|g' \
+RUN sed -i 's|/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-01/itk-geo/|/traccc/itk-geometry/|g' \
                 /traccc-aaS/traccc-aaS/standalone/src/TracccGpuStandalone.hpp
 
-RUN cd traccc-aaS/backend/traccc-gpu && mkdir build install && cd build && \
+RUN cd /traccc-aaS/traccc-aaS/backend/traccc-gpu && mkdir build install && cd build && \
     cmake -B . -S ../ -DCMAKE_INSTALL_PREFIX=../install && \
     cmake --build . --target install -- -j20
 
