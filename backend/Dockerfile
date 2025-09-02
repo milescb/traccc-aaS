@@ -26,7 +26,7 @@ RUN sed -i 's|/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P
                 /traccc-aaS/traccc-aaS/standalone/src/TracccGpuStandalone.hpp
 
 RUN cd /traccc-aaS/traccc-aaS/backend/traccc-gpu && mkdir build install && cd build && \
-    cmake -B . -S ../ -DCMAKE_INSTALL_PREFIX=../install && \
+    cmake -B . -S ../ -DCMAKE_INSTALL_PREFIX=../install -DCMAKE_BUILD_TYPE=Release && \
     cmake --build . --target install -- -j20
 
 RUN cp -r /traccc-aaS/traccc-aaS/backend/models /traccc-aaS/traccc-aaS/backend/models_multi_gpu 
