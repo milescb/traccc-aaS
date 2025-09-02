@@ -523,8 +523,6 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
     // traccc::edm::track_candidate_collection<traccc::default_algebra>::buffer 
     //     res_track_candidates = m_resolution({track_candidates, measurements});
 
-    // std::cout << "Made it here 1" << std::endl;
-
     // Run the track fitting
     const fitting_algorithm::output_type track_states = 
         m_fitting(m_device_detector_view, m_field, 
