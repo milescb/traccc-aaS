@@ -3,6 +3,8 @@
 
 #include <iostream>
 #include <memory>
+#include <chrono>
+#include <unordered_map>
 
 // CUDA include(s).
 #include <cuda_runtime.h>
@@ -120,13 +122,6 @@ struct cell_order {
         }
     }
 };  // struct cell_order
-
-void read_cells(traccc::edm::silicon_cell_collection::host &out, 
-                const std::vector<traccc::io::csv::cell> &cells, 
-                const traccc::silicon_detector_description::host* dd,
-                bool deduplicate,
-                bool use_acts_geometry_id);
-
 
 traccc::magnetic_field make_magnetic_field(std::string filename) {
     traccc::magnetic_field result;
@@ -272,6 +267,8 @@ private:
     std::map<int64_t, uint64_t> m_athena_to_detray_map;
     /// Detray to Athena map (reverse mapping)
     std::unordered_map<uint64_t, int64_t> m_detray_to_athena_map;
+    /// detector description to geo id map
+    std::unordered_map<traccc::geometry_id, unsigned int> m_geomIdMap;
 
     // program configuration 
     /// detector options
@@ -339,6 +336,16 @@ private:
     // copy back!
     traccc::device::container_d2h_copy_alg<traccc::track_state_container_types>
         m_copy_track_states;
+
+    // Helper function to read in cells
+    std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>> read_all_cells(
+        const std::vector<traccc::io::csv::cell> &cells);
+
+    void read_cells(traccc::edm::silicon_cell_collection::host &out, 
+                const std::vector<traccc::io::csv::cell> &cells, 
+                const traccc::silicon_detector_description::host* dd,
+                bool deduplicate,
+                bool use_acts_geometry_id);
 
 public:
     TracccGpuStandalone( 
@@ -457,6 +464,13 @@ void TracccGpuStandalone::initialize()
     m_copy.setup(m_device_det_descr)->wait();
     m_copy(m_det_descr_data, m_device_det_descr)->wait();
 
+    // fill the det description to geometry id map
+    m_geomIdMap.clear();
+    m_geomIdMap.reserve(m_det_descr.geometry_id().size());
+    for (unsigned int i = 0; i < m_det_descr.geometry_id().size(); ++i) {
+        m_geomIdMap[m_det_descr.geometry_id()[i].value()] = i;
+    }
+
     // Create the detector and read the configuration file
     m_detector = std::make_unique<host_detector_type>(*m_host_mr);
     traccc::io::read_detector(
@@ -472,8 +486,8 @@ void TracccGpuStandalone::initialize()
 }
 
 traccc::track_state_container_types::host TracccGpuStandalone::run(
-    std::vector<traccc::io::csv::cell> cells)
-{   
+    std::vector<traccc::io::csv::cell> cells
+) {
     traccc::edm::silicon_cell_collection::host read_out(*m_mr.host);
 
     // Read the cells from the relevant event into host memory.
@@ -517,14 +531,14 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
             {track_candidates, measurements});
 
     // Print fitting stats
-    // TODO: remove this in production code, add ability to select at initialization
-    std::cout << "Number of measurements: " << m_copy.get_size(measurements) << std::endl;
-    std::cout << "Number of spacepoints: " << m_copy.get_size(spacepoints) << std::endl;
-    std::cout << "Number of seeds: " << m_copy.get_size(seeds) << std::endl;
-    std::cout << "Number of track params: " << m_copy.get_size(track_params) << std::endl;
-    std::cout << "Number of track candidates: " << m_copy.get_size(track_candidates) << std::endl;
+    // // TODO: remove this in production code, add ability to select at initialization
+    // std::cout << "Number of measurements: " << m_copy.get_size(measurements) << std::endl;
+    // std::cout << "Number of spacepoints: " << m_copy.get_size(spacepoints) << std::endl;
+    // std::cout << "Number of seeds: " << m_copy.get_size(seeds) << std::endl;
+    // std::cout << "Number of track params: " << m_copy.get_size(track_params) << std::endl;
+    // std::cout << "Number of track candidates: " << m_copy.get_size(track_candidates) << std::endl;
     // std::cout << "Number of resolved track candidates: " << m_copy.get_size(res_track_candidates) << std::endl;
-    std::cout << "Number of fitted tracks: " << track_states.headers.size() << std::endl;
+    // std::cout << "Number of fitted tracks: " << track_states.headers.size() << std::endl;
 
     // copy track states to host
     auto track_states_host = m_copy_track_states(track_states);
@@ -582,105 +596,50 @@ std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(
     return cells;
 }
 
-std::map<std::uint64_t, std::map<traccc::io::csv::cell, float, cell_order>> 
-    fill_cell_map(const std::vector<traccc::io::csv::cell> &cells, 
-        unsigned int &nduplicates)
+std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>>
+    TracccGpuStandalone::read_all_cells(
+        const std::vector<traccc::io::csv::cell> &cells)
 {
-    std::map<std::uint64_t, std::map<traccc::io::csv::cell, float, cell_order>> cellMap;
-    nduplicates = 0;
+    std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>> result;
+
+    // Pre-count cells per geometry_id to avoid reallocations
+    std::unordered_map<std::uint64_t, size_t> counts;
+    for (const auto &cell : cells) {
+        counts[cell.geometry_id]++;
+    }
+    
+    // Reserve space for each geometry_id
+    for (const auto& [geom_id, count] : counts) {
+        result[geom_id].reserve(count);
+    }
 
     for (const auto &iocell : cells)
     {
-        auto ret = cellMap[iocell.geometry_id].insert({iocell, iocell.value});
-        if (ret.second == false) {
-            cellMap[iocell.geometry_id].at(iocell) += iocell.value;
-            ++nduplicates;
-        }
-    }
-
-    return cellMap;
-}
-
-std::map<std::uint64_t, std::vector<traccc::io::csv::cell>> 
-    create_result_container(const std::map<std::uint64_t, 
-        std::map<traccc::io::csv::cell, float, cell_order>> &cellMap)
-{
-    std::map<std::uint64_t, std::vector<traccc::io::csv::cell> > result;
-    for (const auto& [geometry_id, cells] : cellMap) 
-    {
-        for (const auto& [cell, value] : cells) 
-        {
-            traccc::io::csv::cell summed_cell{cell};
-            summed_cell.value = value;
-            result[geometry_id].push_back(summed_cell);
-        }
-    }
-    return result;
-}
-
-std::map<std::uint64_t, std::vector<traccc::io::csv::cell>> read_deduplicated_cells(
-    const std::vector<traccc::io::csv::cell> &cells)
-{
-    unsigned int nduplicates = 0;
-    auto cellMap = fill_cell_map(cells, nduplicates);
-
-    if (nduplicates > 0)
-    {
-        std::cout << "WARNING: " << nduplicates << " duplicate cells found." << std::endl;
-    }
-
-    return create_result_container(cellMap);
-}
-
-std::map<std::uint64_t, std::vector<traccc::io::csv::cell>> read_all_cells(
-    const std::vector<traccc::io::csv::cell> &cells)
-{
-    std::map<std::uint64_t, std::vector<traccc::io::csv::cell> > result;
-
-    for (const auto &iocell : cells)
-    {
-        traccc::io::csv::cell cell{iocell.geometry_id, iocell.measurement_id, 
+        result[iocell.geometry_id].emplace_back(iocell.geometry_id, iocell.measurement_id, 
                             iocell.channel0, iocell.channel1, 
-                            iocell.timestamp, iocell.value};
-        result[iocell.geometry_id].push_back(cell);
+                            iocell.timestamp, iocell.value);
     }
 
-    // Sort the cells. Deduplication or not, they do need to be sorted.
-    for (auto& [_, cells] : result) 
-    {
-        std::sort(cells.begin(), cells.end(), ::cell_order());
-    }
+    // Sorting happens on the client side!
+    // for (auto& [_, cells] : result) 
+    // {
+    //     std::sort(cells.begin(), cells.end(), ::cell_order());
+    // }
 
     return result;
 }
 
-void read_cells(traccc::edm::silicon_cell_collection::host &out, 
+void TracccGpuStandalone::read_cells(traccc::edm::silicon_cell_collection::host &out, 
                 const std::vector<traccc::io::csv::cell> &cells, 
                 const traccc::silicon_detector_description::host* dd,
                 bool deduplicate,
                 bool use_acts_geometry_id)
 {
-    // clear output container
-    out.resize(0u);
+    out.resize(0);
+    out.reserve(cells.size());
 
     // get the cells and modules in intermediate format
-    auto cellsMap = (deduplicate ? read_deduplicated_cells(cells)
-                                 : read_all_cells(cells));
-
-    // If there is a detector description object, build a map of geometry IDs
-    // to indices inside the detector description.
-    std::map<traccc::geometry_id, unsigned int> geomIdMap;
-    if (dd) {
-        if (use_acts_geometry_id) {
-            for (unsigned int i = 0; i < dd->acts_geometry_id().size(); ++i) {
-                geomIdMap[dd->acts_geometry_id()[i]] = i;
-            }
-        } else {
-            for (unsigned int i = 0; i < dd->geometry_id().size(); ++i) {
-                geomIdMap[dd->geometry_id()[i].value()] = i;
-            }
-        }
-    }
+    auto cellsMap = read_all_cells(cells);
 
     // Fill the output containers with the ordered cells and modules.
     for (const auto& [geometry_id, cellz] : cellsMap) {
@@ -688,16 +647,13 @@ void read_cells(traccc::edm::silicon_cell_collection::host &out,
         // Figure out the index of the detector description object, for this
         // group of cells.
         unsigned int ddIndex = 0;
-        if (dd) {
-            auto it = geomIdMap.find(geometry_id);
-            if (it == geomIdMap.end()) {
-                throw std::runtime_error("Could not find geometry ID (" +
-                                         std::to_string(geometry_id) +
-                                         ") in the detector description");
-            }
-            ddIndex = it->second;
+        auto it = m_geomIdMap.find(geometry_id);
+        if (it == m_geomIdMap.end()) {
+            throw std::runtime_error("Could not find geometry ID (" +
+                                        std::to_string(geometry_id) +
+                                        ") in the detector description");
         }
-
+        ddIndex = it->second;
 
         // Add the cells to the output.
         for (auto& cell : cellz) {
