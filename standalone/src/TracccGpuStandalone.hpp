@@ -439,7 +439,6 @@ void TracccGpuStandalone::initialize()
     m_detector_opts.digitization_file = m_geoDir + "/ITk_digitization_config_with_strips_with_shift_annulus_flip.json";
     m_detector_opts.grid_file = m_geoDir + "/ITk_DetectorBuilder_surface_grids.json";
     m_detector_opts.material_file = m_geoDir + "/ITk_detector_material.json";
-    m_detector_opts.material_file = m_geoDir + "/ITk_detector_material.json";
 
     // Load Athena-to-Detray mapping
     std::string athenaTransformsPath = m_geoDir + "/athenaIdentifierToDetrayMap.txt";
