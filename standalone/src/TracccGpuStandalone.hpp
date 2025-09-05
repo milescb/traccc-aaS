@@ -488,44 +488,101 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
     std::vector<traccc::io::csv::cell> cells
 ) {
     traccc::edm::silicon_cell_collection::host read_out(*m_mr.host);
+    
+    auto start = std::chrono::high_resolution_clock::now();
 
-    // Read the cells from the relevant event into host memory.
+    auto process_start = std::chrono::high_resolution_clock::now();
     read_cells(read_out, cells, &m_det_descr, true, false);
-
+    auto process_stop = std::chrono::high_resolution_clock::now();
+    
+    auto alloc_start = std::chrono::high_resolution_clock::now();
     traccc::edm::silicon_cell_collection::buffer cells_buffer(
         static_cast<unsigned int>(read_out.size()), *m_cached_device_mr);
+    auto alloc_stop = std::chrono::high_resolution_clock::now();
+    
+    auto copy_start = std::chrono::high_resolution_clock::now();
     m_copy(vecmem::get_data(read_out), cells_buffer)->ignore();
+    auto copy_stop = std::chrono::high_resolution_clock::now();
+
+    std::cout << "Cell processing: " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(process_stop - process_start).count() 
+        << " ms" << std::endl;
+    std::cout << "GPU buffer allocation: " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(alloc_stop - alloc_start).count() 
+        << " ms" << std::endl;
+    std::cout << "Host-to-device copy: " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(copy_stop - copy_start).count() 
+        << " ms" << std::endl;
+
+    auto stop = std::chrono::high_resolution_clock::now();
+    std::cout << "Total read cells time: " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count() 
+        << " ms" << std::endl;
 
     // Clusterization
+    start = std::chrono::high_resolution_clock::now();
+
     traccc::measurement_collection_types::buffer measurements =
         m_clusterization(cells_buffer, m_device_det_descr);
     m_measurement_sorting(measurements);
-    
+
+    stop = std::chrono::high_resolution_clock::now();
+    std::cout << "Took " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count() 
+        << " ms to run clusterization and sort measurements" << std::endl;
+
     // Spacepoint formation
+    start = std::chrono::high_resolution_clock::now();
+
     traccc::edm::spacepoint_collection::buffer spacepoints =
         m_spacepoint_formation(m_device_detector_view, measurements);
 
-    // Seeding and track param est.
-    traccc::edm::seed_collection::buffer seeds = m_seeding(spacepoints);
-    m_stream.synchronize();
+    stop = std::chrono::high_resolution_clock::now();
+    std::cout << "Took " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count() 
+        << " ms to form spacepoints" << std::endl;
 
+    // Seeding and track param est.
+    start = std::chrono::high_resolution_clock::now();
+
+    traccc::edm::seed_collection::buffer seeds = m_seeding(spacepoints);
+
+    stop = std::chrono::high_resolution_clock::now();
+    std::cout << "Took " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count() 
+        << " ms to form seeds" << std::endl;
+
+    start = std::chrono::high_resolution_clock::now();
     const traccc::cuda::track_params_estimation::output_type track_params =
         m_track_parameter_estimation(measurements, spacepoints,
             seeds, m_field_vec);
-    m_stream.synchronize();
-                     
+    stop = std::chrono::high_resolution_clock::now();
+    std::cout << "Took " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count() 
+        << " ms to estimate track parameters" << std::endl;
+
     // Run the track finding
+    start = std::chrono::high_resolution_clock::now();
     const finding_algorithm::output_type track_candidates = m_finding(
-        m_device_detector_view, m_field, measurements, track_params);       
+        m_device_detector_view, m_field, measurements, track_params); 
+    stop = std::chrono::high_resolution_clock::now();
+    std::cout << "Took " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count() 
+        << " ms to find track candidates" << std::endl;
 
     //  // Run the resolution algorithm on the candidates
     // traccc::edm::track_candidate_collection<traccc::default_algebra>::buffer 
     //     res_track_candidates = m_resolution({track_candidates, measurements});
 
     // Run the track fitting
+    start = std::chrono::high_resolution_clock::now();
     const fitting_algorithm::output_type track_states = 
         m_fitting(m_device_detector_view, m_field, 
             {track_candidates, measurements});
+    stop = std::chrono::high_resolution_clock::now();
+    std::cout << "Took " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count() 
+        << " ms to fit tracks" << std::endl;
 
     // Print fitting stats
     // // TODO: remove this in production code, add ability to select at initialization
@@ -538,9 +595,15 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
     // std::cout << "Number of fitted tracks: " << track_states.headers.size() << std::endl;
 
     // copy track states to host
+    start = std::chrono::high_resolution_clock::now();
     auto track_states_host = m_copy_track_states(track_states);
+    stop = std::chrono::high_resolution_clock::now();
+    std::cout << "Took " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count() 
+        << " ms to copy track states to host" << std::endl;
 
     // filter out tracks with ndf < 1
+    start = std::chrono::high_resolution_clock::now();
     traccc::track_state_container_types::host filtered_track_states;
     size_t initial_count = track_states_host.size();
 
@@ -557,6 +620,11 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
                   << " tracks failed to fit (ndf < 1) and were removed." 
                   << std::endl;
     }
+
+    stop = std::chrono::high_resolution_clock::now();
+    std::cout << "Took " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count() 
+        << " ms to filter track states" << std::endl;
 
     return filtered_track_states;
 }

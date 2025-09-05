@@ -26,6 +26,8 @@
 
 #include <cuda_runtime_api.h>
 
+#include <chrono>
+
 #include "TracccGpuStandalone.hpp"
 #include "triton/backend/backend_common.h"
 #include "triton/backend/backend_input_collector.h"
@@ -644,6 +646,8 @@ TRITONBACKEND_ModelInstanceExecute(
     uint64_t compute_start_ns = 0;
     SET_TIMESTAMP(compute_start_ns);
 
+    auto input_proc_start = std::chrono::high_resolution_clock::now();
+
     // Determine the number of objects in the input buffer
     size_t num_cells = input_cell_positions_buffer_byte_size / (sizeof(std::int64_t) * 4);
     size_t num_props = input_cell_properties_buffer_byte_size / (sizeof(float) * 2);
@@ -671,9 +675,16 @@ TRITONBACKEND_ModelInstanceExecute(
     // Read measurements into traccc 
     std::vector<traccc::io::csv::cell> cells = instance_state->traccc_gpu_standalone_->read_from_array(
         cell_positions_ptr, cell_properties_ptr, num_cells, true);
+    
+    auto input_proc_end = std::chrono::high_resolution_clock::now();
+    std::cout << "[TIMING] Input processing: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(input_proc_end - input_proc_start).count()
+              << " ms" << std::endl;
 
     // run the reco chain
     auto track_states = instance_state->traccc_gpu_standalone_->run(cells);
+
+    auto output_proc_start = std::chrono::high_resolution_clock::now();
 
     uint64_t compute_end_ns = 0;
     SET_TIMESTAMP(compute_end_ns);
@@ -783,6 +794,11 @@ TRITONBACKEND_ModelInstanceExecute(
             reinterpret_cast<const char*>(geometry_ids_buffer.data()),
             TRITONSERVER_MEMORY_CPU, 0);
     }
+
+    auto output_proc_end = std::chrono::high_resolution_clock::now();
+    std::cout << "[TIMING] Output processing: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(output_proc_end - output_proc_start).count()
+              << " ms" << std::endl;
 
     // Finalize the responder. If 'true' is returned, the output
     // tensors' data will not be valid until the backend synchronizes
