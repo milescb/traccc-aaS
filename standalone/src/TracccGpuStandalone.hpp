@@ -164,32 +164,33 @@ using fitting_algorithm = traccc::cuda::kalman_fitting_algorithm;
 // fitting and finding params
 static traccc::seedfinder_config create_and_setup_finder_config() {
     traccc::seedfinder_config cfg;
-    // Set desired values to match reference
     cfg.zMin = -3000.f * traccc::unit<float>::mm;
     cfg.zMax = 3000.f * traccc::unit<float>::mm;
     cfg.rMax = 320.f * traccc::unit<float>::mm;
     cfg.rMin = 33.f * traccc::unit<float>::mm;
-    cfg.collisionRegionMin = -114.f * traccc::unit<float>::mm;
-    cfg.collisionRegionMax = 114.f * traccc::unit<float>::mm;
-    cfg.minPt = 400.f * traccc::unit<float>::MeV;
-    cfg.cotThetaMax = 27.2899f;
+    // 3 sigmas of max beam spot delta z for Run 3
+    cfg.collisionRegionMax = 3 * 38 * traccc::unit<float>::mm;
+    cfg.collisionRegionMin = -cfg.collisionRegionMax;
+    // Based on Pixel barrel layers layout
+    // Minimum R distance between 2 layers: 30
+    // Max distance between N, N+2 layer (allowing one "hole"): 160
+    // Plus some margin (2 mm)
     cfg.deltaRMin = 28.f * traccc::unit<float>::mm;
     cfg.deltaRMax = 162.f * traccc::unit<float>::mm;
-    cfg.impactMax = 10.f * traccc::unit<float>::mm;  // Changed from 2.f
-    cfg.sigmaScattering = 3.0f;  // Changed from 2.0f
+    cfg.minPt = 400.f * traccc::unit<float>::MeV;
+    cfg.cotThetaMax = 27.2899f;
+    cfg.impactMax = 10.f * traccc::unit<float>::mm;
+    cfg.sigmaScattering = 3.0f;
     cfg.maxPtScattering = 10.f * traccc::unit<float>::GeV;
-    cfg.maxSeedsPerSpM = 2;  // Changed from 3
-    cfg.radLengthPerSeed = 0.05f;  // Explicitly set
-    // cfg.bFieldInZ uses its default (1.99724f T) unless set here
-
-    cfg.setup(); // Call setup() again with the new values
+    cfg.radLengthPerSeed = 0.05f;
+    cfg.maxSeedsPerSpM = 2;
+    cfg.setup();
     return cfg;
 }
 
 // Helper function to create and setup seedfilter config
 static traccc::seedfilter_config create_and_setup_filter_config() {
     traccc::seedfilter_config cfg;
-    // cfg.maxSeedsPerSpM = 2;
     cfg.good_spB_min_radius = 150.f * traccc::unit<float>::mm;
     cfg.good_spB_weight_increase = 400.f;
     cfg.good_spT_max_radius = 150.f * traccc::unit<float>::mm;
@@ -203,7 +204,7 @@ static traccc::seedfilter_config create_and_setup_filter_config() {
 // Helper function to create and setup finding_algorithm::config_type
 static finding_algorithm::config_type create_and_setup_finding_config() {
     finding_algorithm::config_type cfg{
-        .max_num_branches_per_seed = 3,                
+        .max_num_branches_per_seed = 3,
         .max_num_branches_per_surface = 5,
         .min_track_candidates_per_track = 7,
         .max_track_candidates_per_track = 20,
@@ -211,8 +212,8 @@ static finding_algorithm::config_type create_and_setup_finding_config() {
         .min_step_length_for_next_surface = 0.5f * detray::unit<float>::mm,
         .max_step_counts_for_next_surface = 100,
         .chi2_max = 10.f,
-        .propagation = { 
-            .navigation = { 
+        .propagation = {
+            .navigation = {
                 .overstep_tolerance = -300.f * traccc::unit<float>::um
             },
             .stepping = {
@@ -234,7 +235,7 @@ static finding_algorithm::config_type create_and_setup_finding_config() {
 // Helper function to create and setup fitting_algorithm::config_type
 static fitting_algorithm::config_type create_and_setup_fitting_config() {
     fitting_algorithm::config_type cfg{
-        .propagation = { 
+        .propagation = {
             .navigation = {
                 .min_mask_tolerance = 1e-5f * traccc::unit<float>::mm,
                 .max_mask_tolerance = 3.f * traccc::unit<float>::mm,
