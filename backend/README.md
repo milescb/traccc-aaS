@@ -32,4 +32,4 @@ export LD_LIBRARY_PATH=$INSTALLDIR/lib:$LD_LIBRARY_PATH
 tritonserver --model-repository=$INSTALLDIR/models
 ```
 
-This will launch both the cpu and gpu model for deployment. 
+This will the GPU model for testing. 

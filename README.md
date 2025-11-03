@@ -3,10 +3,10 @@
 Main objective of this repo: run [traccc](https://github.com/acts-project/traccc/tree/main) as-a-Service. Getting this working includes creating three main components:
 
 1. a shared library of `traccc` and writing a standalone version with the essential pieces of the code included
-2. a custom backend using the standalone version above to launch the trition server
+2. a custom backend using the standalone version above to launch the Triton server
 3. a client to send data to the server
 
-A minimal description of how to build a working version is detailed below. In each subdirectory of this project, a README containing more information can be found. For instructions on running the pipeline with an Athena client on `lxplus`, consult [this CodiMD page](https://codimd.web.cern.ch/1FcLmapORpeBtAVL_M6h4A?view). 
+A minimal description of how to build a working version is detailed below. In each subdirectory of this project, a README containing more information can be found. For instructions on running the pipeline with an Athena client on `lxplus`, consult [this CodiMD page](https://codimd.web.cern.ch/1FcLmapORpeBtAVL_M6h4A?view). The last part of this README describes the necessary steps for maintaining and updating `traccc-aaS` when a new release of `traccc` is available. 
 
 ## Obtaining the `ITk` geometry files
 
@@ -14,7 +14,7 @@ You will need access to the `ITk` geometry files to run this repository, which c
 
 ## Running out of the box
 
-The easiest way to run `traccc` as-a-Service is with our container. Pull the image at `docker.io/milescb/traccc-aas:v1.0_athena_client` and run the image interactively. To do this, you need access to the ITk geometry files, obtained by following the above instructions, and these need to be mounted to `/traccc/itk-geometry`. 
+The easiest way to run `traccc` as-a-Service is with our container. Pull the image at `docker.io/milescb/traccc-aas:v1.2_athena_client` and run the image interactively. To do this, you need access to the ITk geometry files, obtained by following the above instructions, and these need to be mounted to `/traccc/itk-geometry`. 
 
 Then, server can be launched with:
 
@@ -177,3 +177,36 @@ helm uninstall atlas-sonic -n atlas-sonic
 ```
 
 Make sure to read the [Policies](https://docs.nationalresearchplatform.org/userdocs/start/policies/) before using Nautilus. 
+
+## Code Maintenance
+
+Ideally this repository should be up-to-date with the latest release of `traccc`. In a perfect world where `traccc` has no major API changes, all that is required to keep this repository in sync is rebuilding `traccc` and then rebuilding the backend with the commands outlined above. However, when major API changes are introduced, this is not possible and parts of the code may need to be edited and refactored. 
+
+### Updating `traccc`
+
+The first step in updating this repository is to pull the most recent changes of `traccc`, and then build using the commands outlined above. From here, you should first attempt to build the standalone wrapper in the `standalone` repository. 
+
+### Updating standalone wrapper
+
+If this doesn't work, compare `standalone/src/TracccGpuStandalone.hpp` to the examples in `traccc/examples/run/cuda/`. In particular, `seq_example_cuda.cpp` is a good place to start for a template of how running the current version of `traccc` looks like. For proper variable initialization in the class `TracccGpuStandalone`, both `full_chain_algorithm.hpp` and the corresponding implementation file `full_chain_algorithm.cpp` are quite helpful. This step can take time and requires at least a cursory understanding of how `traccc` algorithms are scheduled. 
+
+In the worst case, the output tracking containers may be changed. In this case, a more thorough investigation of the code may be necessary. First, find out what new output container(s) look like by browsing `traccc/core/include/traccc/edm` for something like `track_state_collection` or `track_fit_collection`. Then, identify how to access all the parameters necessary to execute the print statements in `standalone/src/TracccGpuStandalone.cpp`. 
+
+Once the standalone compiles and runs, you can move on to the next step!
+
+### Updating backend
+
+If you did not have to make any changes to `standalone/src/TracccGpuStandalone.cpp` but only to the header file, then you should be able to build as before. If you did find yourself in the worst-case scenario above, then you will need to make similar changes to `backend/traccc-gpu/traccc.cc:676-836` as before to properly deal with output parsing. 
+
+When complete, test by building and running the simple python client as detailed above. 
+
+### Building production image
+
+Once all the above steps are completed, you can build a container with your new developments by first creating a merge request with `main` of this repository, and then build an image from the `backend` repository with:
+
+```
+podman-hpc build -t name:tag .
+```
+or use your favorite docker application. 
+
+If you would like to build a container without making a MR, edit `backend/Dockerfile:22` with your fork of this repository. 

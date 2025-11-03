@@ -19,7 +19,7 @@ ENV LD_LIBRARY_PATH=/traccc/install/lib:$LD_LIBRARY_PATH
 
 # install custom backend
 WORKDIR /traccc-aaS
-RUN git clone https://github.com/milescb/traccc-aaS.git && cd traccc-aaS/ && git checkout itk-hits-to-tracks
+RUN git clone https://github.com/milescb/traccc-aaS.git && cd traccc-aaS/
 
 # Replace hard-coded paths in TracccGpuStandalone.hpp with local paths in docker
 RUN sed -i 's|/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-01/itk-geo/|/traccc/itk-geometry/|g' \
