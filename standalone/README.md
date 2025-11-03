@@ -13,7 +13,7 @@ cmake --build .
 Run within the build directory
 
 ```
-./TracccGpuStandalone $DATADIR/odd/geant4_10muon_10GeV/event000000000-cells.csv 0
+./TracccGpuStandalone ../../client/event000000000-cells.csv 0
 ```
 
 ## Compare to official example

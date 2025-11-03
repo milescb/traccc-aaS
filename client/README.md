@@ -9,7 +9,7 @@ conda env create -f env.yml
 conda activate triton-client
 ```
 
-then run the model from the client directory:
+If using our Docker image, then these packages are already installed. Then, we run inference with the client via:
 
 ```
 python TracccTritonClient.py
@@ -21,4 +21,4 @@ or to run using the remote configuration:
 python TracccTritonClint.py --ssl -u <url_to_server>
 ```
 
-This uses the example file `event000000000-cells.csv` from the ODD detector. More example files can be found in `$DATADIR` and passed to the client via the `--filename` argument. Additionally, if the server is not running on `localhost:8000`, then a url may be provided through the `--url` argument. Finally, the architecture (CPU vs GPU) can be changed with the flag `-a cpu`. 
+This uses the example file `event000000000-cells.csv` from the ITk detector. More example files can be found in `$DATADIR` and passed to the client via the `--filename` argument. Additionally, if the server is not running on `localhost:8000`, then a url may be provided through the `--url` argument. Finally, the architecture (CPU vs GPU) can be changed with the flag `-a cpu`. 

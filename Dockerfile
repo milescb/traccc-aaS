@@ -23,6 +23,10 @@ RUN apt-get update -y && apt-get install -y \
     libsuitesparse-dev libhwloc-dev libsuperlu-dev \
   && apt-get clean -y
 
+RUN apt-get update -y && apt-get install -y git-lfs \
+  && git lfs install \
+  && apt-get clean -y
+
 RUN ln -s /usr/bin/python3 /usr/bin/python
 RUN pip3 install -U pandas matplotlib seaborn
 

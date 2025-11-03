@@ -2,41 +2,31 @@ backend: "traccc"
 max_batch_size: 0
 input [
    {
-    name: "GEOMETRY_ID"
-    data_type: TYPE_UINT64
-    dims: [ -1 ]
+    name: "CELL_POSITIONS"
+    data_type: TYPE_INT64
+    dims: [ -1, 4 ]
   },
   {
-    name: "FEATURES"
-    data_type: TYPE_FP64
-    dims: [ -1, 5 ]
+    name: "CELL_PROPERTIES"
+    data_type: TYPE_FP32
+    dims: [ -1, 2 ]
   }
 ]
 output [
   {
-    name: "chi2"
+    name: "TRK_PARAMS"
     data_type: TYPE_FP32
-    dims: [-1]
+    dims: [ -1, 5 ]
   },
   {
-    name: "ndf"
+    name: "MEASUREMENTS"
     data_type: TYPE_FP32
-    dims: [-1]
+    dims: [ -1, 4 ]
   },
   {
-    name: "local_positions"
-    data_type: TYPE_FP32
-    dims: [-1, 2]
-  },
-  {
-    name: "local_positions_lengths"
-    data_type: TYPE_INT32
-    dims: [-1]
-  },
-  {
-    name: "variances"
-    data_type: TYPE_FP32
-    dims: [-1, 2]
+    name: "GEOMETRY_IDS"
+    data_type: TYPE_INT64
+    dims: [ -1, 1 ]
   }
 ]
 instance_group [

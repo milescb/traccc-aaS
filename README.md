@@ -6,11 +6,17 @@ Main objective of this repo: run [traccc](https://github.com/acts-project/traccc
 2. a custom backend using the standalone version above to launch the trition server
 3. a client to send data to the server
 
-A minimal description of how to build a working version is detailed below. In each subdirectory of this project, a README containing more information can be found. 
+A minimal description of how to build a working version is detailed below. In each subdirectory of this project, a README containing more information can be found. For instructions on running the pipeline with an Athena client on `lxplus`, consult [this CodiMD page](https://codimd.web.cern.ch/1FcLmapORpeBtAVL_M6h4A?view). 
+
+## Obtaining the `ITk` geometry files
+
+You will need access to the `ITk` geometry files to run this repository, which can be found at `/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/` on CERN's `lxplus` computing cluster. Note that to access these, you must be a part of the e-group `atlas-tdaq-phase2-EFTracking-developers`. If you are outside of ATLAS, please refer to the `main` branch to run the ODD version of the code.
 
 ## Running out of the box
 
-The easiest way to run `traccc` as-a-Service is with our container. Pull the image at `docker.io/milescb/traccc-aas:v1.1_traccc0.23.0`, then run the image interactively. The server can be launched with:
+The easiest way to run `traccc` as-a-Service is with our container. Pull the image at `docker.io/milescb/traccc-aas:v1.0_athena_client` and run the image interactively. To do this, you need access to the ITk geometry files, obtained by following the above instructions, and these need to be mounted to `/traccc/itk-geometry`. 
+
+Then, server can be launched with:
 
 ```
 tritonserver --model-repository=$MODEL_REPO
@@ -29,6 +35,9 @@ Simply clone the repository with
 
 ```
 git clone --recurse-submodules git@github.com:milescb/traccc-aaS.git
+
+# checkout this branch
+cd traccc-aaS && git checkout itk-hits-to-tracks
 ```
 
 ### Docker
@@ -42,13 +51,13 @@ shifter --module=gpu --image=milescb/triton-server:25.02-py3_gcc13.3
 
 or use your favorite docker application and mount the appropriate directories. 
 
-### Shared Library 
+### Shared Library on `nersc`
 
-To run out of the box at `nersc`, an installation of `traccc` and the the backend can be found at `/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_061825_tracccv0.23.0/installinstall`. To set up the environment, run the docker then set the following environment variables
+To run out of the box at `nersc`, an installation of `traccc` and the the backend can be found at `/global/cfs/projectdirs/m3443/data/traccc-aaS/prod/ver_082625_g200/install`. To set up the environment, enter the image, then set the following environment variables
 
 ```
 export DATADIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/data
-export INSTALLDIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_061825_tracccv0.23.0/installinstall
+export INSTALLDIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/prod/ver_082625_g200/install
 export PATH=$INSTALLDIR/bin:$PATH
 export LD_LIBRARY_PATH=$INSTALLDIR/lib:$LD_LIBRARY_PATH
 ```
@@ -88,7 +97,7 @@ First, enter the docker and set environment variables as documented above. Then 
 cd backend/traccc-gpu && mkdir build install && cd build
 cmake -B . -S ../ \
     -DCMAKE_INSTALL_PREFIX=../install/ \
-    -DCMAKE_INSTALL_PREFIX=../install/
+    -DCMAKE_BUILD_TYPE=Release
 
 cmake --build . --target install -- -j20
 ```

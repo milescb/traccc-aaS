@@ -3,13 +3,26 @@ import sys
 
 import numpy as np
 import pandas as pd
-# import tritonclient.http as httpclient
+import awkward as ak
 
 import matplotlib.pyplot as plt
 import mplhep
 plt.style.use(mplhep.style.ROOT)
 
 import tritonclient.grpc as grpcclient
+
+def plot_histogram(data, name, xlabel, bins=50):
+    """Plots a histogram for the given data on a new canvas."""
+    if data is None or data.size == 0:
+        print(f"No data to plot for {name}")
+        return
+    plt.figure(figsize=(8, 8))
+    plt.hist(data, bins=bins, histtype='step', label=name)
+    plt.xlabel(xlabel)
+    plt.ylabel("Events")
+    plt.tight_layout()
+    plt.yscale('log')
+    plt.savefig(f"plots/{name.replace(" ", "_")}.png")
 
 def main():
     # For the gRPC client, need to specify large enough concurrency to
@@ -24,21 +37,27 @@ def main():
         print("channel creation failed: " + str(e))
         sys.exit(1)
 
-    # Read input data
     input_data = pd.read_csv(FLAGS.filename)
-    input0_data = input_data['geometry_id'].to_numpy(dtype=np.uint64)
-    input1_data = input_data.drop('geometry_id', axis=1).to_numpy(dtype=np.float64)
+    
+    cell_positions_columns = ['geometry_id', 'measurement_id', 'channel0', 'channel1']
+    cell_properties_columns = ['timestamp', 'value']
 
-    # Prepare inputs
+    input0_data = input_data[cell_positions_columns].to_numpy(dtype=np.int64)
+    input1_data = input_data[cell_properties_columns].to_numpy(dtype=np.float32)
+
     inputs = [
-        grpcclient.InferInput("GEOMETRY_ID", input0_data.shape, "UINT64"),
-        grpcclient.InferInput("FEATURES", input1_data.shape, "FP64")
+        grpcclient.InferInput("CELL_POSITIONS", input0_data.shape, "INT64"),
+        grpcclient.InferInput("CELL_PROPERTIES", input1_data.shape, "FP32")
     ]
     inputs[0].set_data_from_numpy(input0_data)
     inputs[1].set_data_from_numpy(input1_data)
 
     # Specify outputs
-    output_names = ["chi2", "ndf", "local_positions", "local_positions_lengths", "variances"]
+    output_names = [
+        "TRK_PARAMS",      # [n_tracks, 5] - chi2, ndf, phi, theta, qop
+        "MEASUREMENTS",    # [total_meas_with_seps, 4] - localx, localy, varx, vary with -1 separators
+        "GEOMETRY_IDS"     # [total_meas_with_seps] - geometry IDs with 0 separators
+    ]
     outputs = [grpcclient.InferRequestedOutput(name) for name in output_names]
 
     # Send inference request synchronously
@@ -49,47 +68,88 @@ def main():
     )
 
     # Retrieve and process outputs
-    chi2 = result.as_numpy("chi2")  # Should be shape (1,)
-    ndf = result.as_numpy("ndf")    # Should be shape (1,)
-    local_positions_buffer = result.as_numpy("local_positions")  # Shape (N, 2)
-    local_positions_lengths = result.as_numpy("local_positions_lengths")  # Shape (N,)
-    variances_buffer = result.as_numpy("variances")          # Shape (N, 2)
+    trk_params = result.as_numpy("TRK_PARAMS")       # [n_tracks, 5]
+    measurements = result.as_numpy("MEASUREMENTS")   # [total_meas_with_seps, 4]
+    geometry_ids = result.as_numpy("GEOMETRY_IDS")   # [total_meas_with_seps]
     
-    print("local_positions_buffer:", local_positions_buffer)
-    print("local_positions_buffer shape:", local_positions_buffer.shape)
-    print("local_positions_lengths:", local_positions_lengths)
-    print("local_positions_lengths shape:", local_positions_lengths.shape)
-    print("variances_buffer:", variances_buffer)
-    print("variances_buffer shape:", variances_buffer.shape)
+    # Extract track parameters
+    chi2 = trk_params[:, 0]
+    ndf = trk_params[:, 1]
+    phi = trk_params[:, 2]
+    theta = trk_params[:, 3]
+    qop = trk_params[:, 4]
     
-    idx = 0
-    reconstructed_positions = []
-    reconstructed_variances = []
-    # position and variance lengths are the same by construction
-    for length in local_positions_lengths:
-        track_positions = []
-        track_variances = []
-        for _ in range(length):
-            pos = local_positions_buffer[idx]
-            track_positions.append(pos)
-            var = variances_buffer[idx]
-            track_variances.append(var)
-            idx += 1
-        reconstructed_positions.append(track_positions)
-        reconstructed_variances.append(track_variances)
-
-    # Print the outputs
-    print("chi2:", chi2)
-    print("chi2 shape:", chi2.shape)
-    print("ndf:", ndf)
-    print("reconstructed_positions:", reconstructed_positions)
-    print("reconstructed_variances:", reconstructed_variances)
+    # Parse flattened measurements and geometry IDs into awkward arrays
+    # Find separator indices (where all measurement values are -1)
+    separator_mask = (measurements[:, 0] == -1) & (measurements[:, 1] == -1) & \
+                     (measurements[:, 2] == -1) & (measurements[:, 3] == -1)
     
-    plt.figure(figsize=(6,6))
-    plt.hist(chi2/ndf, bins=25, range=(0, 5))
-    plt.xlabel(r"$\chi^2/ndf$", loc="right")
-    plt.ylabel("Fitted Track Results", loc="top")
-    plt.savefig("plots/chi2.png", bbox_inches="tight", dpi=300)
+    # Get separator positions
+    separator_indices = np.where(separator_mask)[0]
+    
+    # Split measurements into tracks using separators
+    track_measurements = []
+    track_geometry_ids = []
+    
+    start_idx = 0
+    for sep_idx in separator_indices:
+        # Extract measurements for this track
+        track_meas = measurements[start_idx:sep_idx]
+        track_geo = geometry_ids[start_idx:sep_idx]
+        
+        track_measurements.append(track_meas)
+        track_geometry_ids.append(track_geo)
+        
+        start_idx = sep_idx + 1
+    
+    # Don't forget the last track (after the last separator)
+    if start_idx < len(measurements):
+        track_measurements.append(measurements[start_idx:])
+        track_geometry_ids.append(geometry_ids[start_idx:])
+    
+    # Create awkward arrays for ragged data
+    ak_measurements = ak.Array(track_measurements)  # [n_tracks][variable_meas, 4]
+    ak_geometry_ids = ak.Array(track_geometry_ids)  # [n_tracks][variable_meas]
+    
+    # Extract components as awkward arrays
+    ak_local_x = ak_measurements[:, :, 0]    # [n_tracks][variable_meas]
+    ak_local_y = ak_measurements[:, :, 1]    # [n_tracks][variable_meas]
+    ak_var_x = ak_measurements[:, :, 2]      # [n_tracks][variable_meas]
+    ak_var_y = ak_measurements[:, :, 3]      # [n_tracks][variable_meas]
+    
+    # For printing measurement dimensions
+    local_x = ak.flatten(ak_local_x)
+    measurement_dims = np.full(len(local_x), 2, dtype=np.uint32)
+    
+    print(f"Number of tracks: {len(trk_params)}")
+    print(f"Number of measurements per track: {ak.num(ak_measurements, axis=1)}")
+    print(f"Total measurements: {ak.sum(ak.num(ak_measurements, axis=1))}")
+    print(f"Track parameters shape: {trk_params.shape}")
+    print(f"Awkward measurements shape: {ak_measurements.type}")
+    print(f"Awkward geometry IDs shape: {ak_geometry_ids.type}")
+    
+    # Example: Access measurements for specific tracks
+    print(f"\nTrack 0 has {len(ak_measurements[0])} measurements:")
+    print(f"  Local positions: {ak_measurements[0][:, :2]}")
+    print(f"  Geometry IDs: {ak_geometry_ids[0]}")
+    
+    if len(ak_measurements) > 1:
+        print(f"\nTrack 1 has {len(ak_measurements[1])} measurements:")
+        print(f"  Local positions: {ak_measurements[1][:, :2]}")
+        print(f"  Geometry IDs: {ak_geometry_ids[1]}")
+    
+    # Plot histograms using flattened data
+    plot_histogram(chi2, "Chi2", "Chi2")
+    plot_histogram(ndf, "NDF", "NDF")
+    plot_histogram(phi, "Phi", "Phi [rad]")
+    plot_histogram(theta, "Theta", "Theta [rad]")
+    plot_histogram(qop, "Q_over_P", "Charge/Momentum [1/GeV]")
+    
+    # Additional awkward array operations
+    print(f"\nAwkward array operations:")
+    print(f"Average measurements per track: {ak.mean(ak.num(ak_measurements, axis=1)):.2f}")
+    print(f"Max measurements in any track: {ak.max(ak.num(ak_measurements, axis=1))}")
+    print(f"Min measurements in any track: {ak.min(ak.num(ak_measurements, axis=1))}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -114,7 +174,7 @@ if __name__ == "__main__":
         type=str,
         required=False,
         default="event000000000-cells.csv",
-        help="Input file name. Default is event000000000-cells.csv.",
+        help="Input file name. Default is event000000000-cells.csv",
     )
     parser.add_argument(
         "-a",

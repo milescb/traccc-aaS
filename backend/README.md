@@ -17,7 +17,7 @@ Assuming building from `<build_dir>` this would look like
 ```
 cmake -B . -S ../ \
     -DCMAKE_INSTALL_PREFIX=../install/ \
-    -DCMAKE_INSTALL_PREFIX=../install/
+    -DCMAKE_BUILD_TYPE=Release
 
 cmake --build . --target install -- -j20
 ````
