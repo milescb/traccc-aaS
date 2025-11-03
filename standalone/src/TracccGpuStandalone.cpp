@@ -54,40 +54,57 @@ int main(int argc, char *argv[])
     std::vector<traccc::io::csv::cell> cells = read_csv(
         event_file, traccc_gpu.getAthenaToDetrayMap(), true);
 
-    // run the traccc algorithm
     auto traccc_result = traccc_gpu.run(cells);
 
-    // print out results
+    int total_tracks = traccc_result.tracks_and_states.tracks.size();
+    int excluded_non_positive_ndf = 0;
+    int excluded_not_all_smoothed = 0;
+    int excluded_unknown = 0;
+    int excluded_no_state = 0;
     int printed_tracks = 0;
-    for (size_t i = 0; i < traccc_result.size() && printed_tracks < 5; ++i)
+
+    for (size_t i = 0; i < traccc_result.tracks_and_states.tracks.size() && printed_tracks < 5; ++i)
     {
-        const auto& [fit_res, state] = traccc_result.at(i);
+        const auto& track = traccc_result.tracks_and_states.tracks.at(i);
 
-        std::cout << "Track " << i << ": chi2 = " << fit_res.trk_quality.chi2
-                  << ", ndf = " << fit_res.trk_quality.ndf
-                  << std::endl;
+        auto track_fit_outcome = track.fit_outcome();
+        if (track_fit_outcome ==
+            traccc::track_fit_outcome::FAILURE_NON_POSITIVE_NDF) {
+            ++excluded_non_positive_ndf;
+            continue;
+        } else if (track_fit_outcome ==
+                   traccc::track_fit_outcome::FAILURE_NOT_ALL_SMOOTHED) {
+            ++excluded_not_all_smoothed;
+            continue;
+        } else if (track_fit_outcome == traccc::track_fit_outcome::UNKNOWN) {
+            ++excluded_unknown;
+            continue;
+        }
 
-        // Get the fitted track parameters from the fitting result
-        const auto& fitted_params = fit_res.fit_params;
-        
-        // Extract the track parameters
+        if (track.state_indices().size() < 1) {
+            excluded_no_state += 1;
+            continue;
+        }
+
+        const auto& fitted_params = track.params();
         traccc::scalar phi = fitted_params.phi();
         traccc::scalar theta = fitted_params.theta();
         traccc::scalar qop = fitted_params.qop();
         
-        // Calculate eta from theta
-        traccc::scalar eta = -std::log(std::tan(theta / 2.0));
-        
-        std::cout << "Track " << i << ": chi2 = " << fit_res.trk_quality.chi2
-                  << ", ndf = " << fit_res.trk_quality.ndf
+        std::cout << "Track " << i << ": chi2 = " << track.chi2()
+                  << ", ndf = " << track.ndf()
                   << ", phi = " << phi
-                  << ", eta = " << eta  
+                  << ", theta = " << theta  
                   << ", q/p = " << qop
                   << std::endl;
 
-        for (auto const& st : state) 
+        for (size_t j = 0; j < track.state_indices().size(); ++j)
         {
-            const traccc::measurement& measurement = st.get_measurement();
+            // extract measurement information
+            size_t state_idx = track.state_indices().at(j);
+            auto const& state = traccc_result.tracks_and_states.states.at(state_idx);
+            traccc::measurement const& measurement =
+                traccc_result.measurements.at(state.measurement_index());
 
             const std::array<float, 2> localPosition = measurement.local;
             const std::array<float, 2> localCovariance = measurement.variance;
@@ -109,6 +126,17 @@ int main(int argc, char *argv[])
 
         ++printed_tracks;
     }
+
+    // Print final exclusion statistics
+    std::cout << "\n=== Track Exclusion Summary ===" << std::endl;
+    std::cout << "Total tracks processed: " << total_tracks << std::endl;
+    std::cout << "Excluded (non-positive NDF): " << excluded_non_positive_ndf << std::endl;
+    std::cout << "Excluded (not all smoothed): " << excluded_not_all_smoothed << std::endl;
+    std::cout << "Excluded (unknown outcome): " << excluded_unknown << std::endl;
+    std::cout << "Excluded (no state): " << excluded_no_state << std::endl;
+    std::cout << "Total excluded: " << (excluded_non_positive_ndf + excluded_not_all_smoothed + 
+                                         excluded_unknown + excluded_no_state) << std::endl;
+    std::cout << "Tracks printed: " << printed_tracks << std::endl;
 
     return 0;
 }

@@ -661,16 +661,16 @@ TRITONBACKEND_ModelInstanceExecute(
     }
 
     std::cout << "Number of cells received: " << num_cells  << std::endl;
-    for (size_t i = 0; i < 5 && i < num_cells; ++i) {
-        std::cout << "Cell " << i << ": ";
-        std::cout << "pos=[";
-        std::cout << cell_positions_ptr[i * 4] << ", ";
-        std::cout << cell_positions_ptr[i * 4 + 1] << ", ";
-        std::cout << cell_positions_ptr[i * 4 + 2] << ", ";
-        std::cout << cell_positions_ptr[i * 4 + 3] << "], props=[";
-        std::cout << cell_properties_ptr[i * 2] << ", ";
-        std::cout << cell_properties_ptr[i * 2 + 1] << "]" << std::endl;
-    }
+    // for (size_t i = 0; i < 5 && i < num_cells; ++i) {
+    //     std::cout << "Cell " << i << ": ";
+    //     std::cout << "pos=[";
+    //     std::cout << cell_positions_ptr[i * 4] << ", ";
+    //     std::cout << cell_positions_ptr[i * 4 + 1] << ", ";
+    //     std::cout << cell_positions_ptr[i * 4 + 2] << ", ";
+    //     std::cout << cell_positions_ptr[i * 4 + 3] << "], props=[";
+    //     std::cout << cell_properties_ptr[i * 2] << ", ";
+    //     std::cout << cell_properties_ptr[i * 2 + 1] << "]" << std::endl;
+    // }
 
     // Read measurements into traccc 
     std::vector<traccc::io::csv::cell> cells = instance_state->traccc_gpu_standalone_->read_from_array(
@@ -682,7 +682,7 @@ TRITONBACKEND_ModelInstanceExecute(
               << " ms" << std::endl;
 
     // run the reco chain
-    auto track_states = instance_state->traccc_gpu_standalone_->run(cells);
+    auto traccc_result = instance_state->traccc_gpu_standalone_->run(cells);
 
     auto output_proc_start = std::chrono::high_resolution_clock::now();
 
@@ -714,7 +714,7 @@ TRITONBACKEND_ModelInstanceExecute(
     // Process the outputs
     {
         // --------------- Process 'TRK_PARAMS', 'MEASUREMENTS', and 'GEOMETRY_IDS' ---------------
-        size_t num_tracks = track_states.size();
+        size_t num_tracks = traccc_result.tracks_and_states.tracks.size();
         
         // Buffers for the output tensors
         std::vector<float> trk_params_buffer;
@@ -722,42 +722,68 @@ TRITONBACKEND_ModelInstanceExecute(
         std::vector<int64_t> geometry_ids_buffer;
 
         trk_params_buffer.reserve(num_tracks * 5);
-        // Measurement reservation is an estimate, actual size depends on track length
         measurements_buffer.reserve(num_tracks * 15 * 4); 
         geometry_ids_buffer.reserve(num_tracks * 15);
 
+        // Track exclusion counters
+        int excluded_non_positive_ndf = 0;
+        int excluded_not_all_smoothed = 0;
+        int excluded_unknown = 0;
+        int excluded_no_state = 0;
+        int included_tracks = 0;
 
-        // process all tracks
+        // Process all tracks
         for (size_t i = 0; i < num_tracks; ++i) {
-            const auto& [fit_res, state] = track_states.at(i);
+            const auto& track = traccc_result.tracks_and_states.tracks.at(i);
 
-            // Add separator before this track's measurements, if it's not the first track
-            if (i > 0) {
+            // Check track fit outcome
+            auto track_fit_outcome = track.fit_outcome();
+            if (track_fit_outcome ==
+                traccc::track_fit_outcome::FAILURE_NON_POSITIVE_NDF) {
+                ++excluded_non_positive_ndf;
+                continue;
+            } else if (track_fit_outcome ==
+                       traccc::track_fit_outcome::FAILURE_NOT_ALL_SMOOTHED) {
+                ++excluded_not_all_smoothed;
+                continue;
+            } else if (track_fit_outcome == traccc::track_fit_outcome::UNKNOWN) {
+                ++excluded_unknown;
+                continue;
+            }
+
+            if (track.state_indices().size() < 1) {
+                ++excluded_no_state;
+                continue;
+            }
+
+            // Add separator before this track's measurements, if it's not the first included track
+            if (included_tracks > 0) {
                 measurements_buffer.insert(measurements_buffer.end(), {-1.0, -1.0, -1.0, -1.0});
                 geometry_ids_buffer.push_back(0);
             }
 
             // --- Process Track Parameters ---
-            const auto& fitted_params = fit_res.fit_params;
+            const auto& fitted_params = track.params();
             traccc::scalar phi = fitted_params.phi();
             traccc::scalar theta = fitted_params.theta();
             traccc::scalar qop = fitted_params.qop();
             
-            trk_params_buffer.push_back(static_cast<float>(fit_res.trk_quality.chi2));
-            trk_params_buffer.push_back(static_cast<float>(fit_res.trk_quality.ndf));
+            trk_params_buffer.push_back(static_cast<float>(track.chi2()));
+            trk_params_buffer.push_back(static_cast<float>(track.ndf()));
             trk_params_buffer.push_back(static_cast<float>(phi));
             trk_params_buffer.push_back(static_cast<float>(theta));
             trk_params_buffer.push_back(static_cast<float>(qop));
 
             // --- Process Measurements for this track ---
-            for (const auto& st : state) {
-                const auto& smoothed_params = st.smoothed();
-                const auto& measurement = st.get_measurement();
+            for (size_t j = 0; j < track.state_indices().size(); ++j) {
+                size_t state_idx = track.state_indices().at(j);
+                auto const& state = traccc_result.tracks_and_states.states.at(state_idx);
+                traccc::measurement const& measurement =
+                    traccc_result.measurements.at(state.measurement_index());
                 
-                // Use the smoothed local position
-                measurements_buffer.push_back(smoothed_params.bound_local()[0]); // local x
-                measurements_buffer.push_back(smoothed_params.bound_local()[1]); // local y
-                // Use the original measurement variance
+                // Use the measurement local position and variance
+                measurements_buffer.push_back(measurement.local[0]); // local x
+                measurements_buffer.push_back(measurement.local[1]); // local y
                 measurements_buffer.push_back(measurement.variance[0]); // var x
                 measurements_buffer.push_back(measurement.variance[1]); // var y
 
@@ -771,10 +797,21 @@ TRITONBACKEND_ModelInstanceExecute(
                     geometry_ids_buffer.push_back(detray_id); // Fallback
                 }
             }
+
+            ++included_tracks;
         }
 
+        // Log exclusion statistics
+        LOG_MESSAGE(TRITONSERVER_LOG_INFO,
+                    (std::string("Track Exclusion Summary - Total: ") + std::to_string(num_tracks) +
+                     ", Excluded (non-positive NDF): " + std::to_string(excluded_non_positive_ndf) +
+                     ", Excluded (not all smoothed): " + std::to_string(excluded_not_all_smoothed) +
+                     ", Excluded (unknown): " + std::to_string(excluded_unknown) +
+                     ", Excluded (no state): " + std::to_string(excluded_no_state) +
+                     ", Included: " + std::to_string(included_tracks)).c_str());
+
         // --- Send 'TRK_PARAMS' tensor ---
-        std::vector<int64_t> trk_params_shape = {static_cast<int64_t>(num_tracks), 5};
+        std::vector<int64_t> trk_params_shape = {static_cast<int64_t>(included_tracks), 5};
         responder.ProcessTensor(
             "TRK_PARAMS", TRITONSERVER_TYPE_FP32, trk_params_shape,
             reinterpret_cast<const char*>(trk_params_buffer.data()),

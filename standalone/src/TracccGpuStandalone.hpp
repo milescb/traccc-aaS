@@ -23,22 +23,32 @@
 #include "traccc/cuda/seeding/seeding_algorithm.hpp"
 #include "traccc/cuda/seeding/spacepoint_formation_algorithm.hpp"
 #include "traccc/cuda/seeding/track_params_estimation.hpp"
+#include "traccc/cuda/utils/make_magnetic_field.hpp"
 #include "traccc/cuda/utils/stream.hpp"
 #include "traccc/edm/silicon_cell_collection.hpp"
-#include "traccc/edm/track_state.hpp"
+#include "traccc/edm/track_fit_collection.hpp"
+#include "traccc/edm/track_parameters.hpp"
+#include "traccc/geometry/detector.hpp"
+#include "traccc/geometry/detector_buffer.hpp"
+#include "traccc/geometry/host_detector.hpp"
+#include "traccc/geometry/silicon_detector_description.hpp"
+// #include "traccc/edm/track_state.hpp"
 #include "traccc/finding/combinatorial_kalman_filter_algorithm.hpp"
 #include "traccc/fitting/kalman_fitting_algorithm.hpp"
 #include "traccc/utils/algorithm.hpp"
 #include "traccc/device/container_d2h_copy_alg.hpp"
 
 // magnetic field include(s).
-#include "traccc/cuda/utils/make_magnetic_field.hpp"
 #include "traccc/bfield/magnetic_field.hpp"
 #include "traccc/bfield/construct_const_bfield.hpp"
 #include "traccc/definitions/primitives.hpp"
 #include "traccc/io/read_magnetic_field.hpp"
 #include "traccc/options/magnetic_field.hpp"
 #include "traccc/options/magnetic_field.hpp"
+
+// #include "traccc/seeding/seeding_algorithm.hpp"
+// #include "traccc/seeding/silicon_pixel_spacepoint_formation_algorithm.hpp"
+// #include "traccc/seeding/track_params_estimation.hpp"
 
 // Detray include(s).
 #include "detray/core/detector.hpp"
@@ -53,13 +63,13 @@
 #include <vecmem/containers/jagged_device_vector.hpp>
 #include <vecmem/memory/binary_page_memory_resource.hpp>
 #include <vecmem/memory/cuda/device_memory_resource.hpp>
-#include <vecmem/memory/memory_resource.hpp>
+#include <vecmem/memory/cuda/host_memory_resource.hpp>
+#include <vecmem/memory/host_memory_resource.hpp>
 #include <vecmem/utils/cuda/async_copy.hpp>
 
 // io
 #include "traccc/io/read_cells.hpp"
 #include "traccc/io/read_digitization_config.hpp"
-#include "traccc/io/read_geometry.hpp"
 #include "traccc/io/utils.hpp"
 #include "traccc/io/csv/make_cell_reader.hpp"
 #include "traccc/io/read_detector.hpp"
@@ -70,22 +80,18 @@
 #include "traccc/options/clusterization.hpp"
 #include "traccc/options/detector.hpp"
 #include "traccc/options/input_data.hpp"
+#include "traccc/options/magnetic_field.hpp"
 #include "traccc/options/performance.hpp"
+#include "traccc/options/program_options.hpp"
 #include "traccc/options/track_finding.hpp"
+#include "traccc/options/track_fitting.hpp"
 #include "traccc/options/track_propagation.hpp"
 #include "traccc/options/track_resolution.hpp"
 #include "traccc/options/track_seeding.hpp"
 
 // Command line option include(s).
-#include "traccc/options/clusterization.hpp"
-#include "traccc/options/detector.hpp"
-#include "traccc/options/input_data.hpp"
-#include "traccc/options/program_options.hpp"
-#include "traccc/options/threading.hpp"
-#include "traccc/options/throughput.hpp"
-#include "traccc/options/track_finding.hpp"
-#include "traccc/options/track_propagation.hpp"
-#include "traccc/options/track_seeding.hpp"
+// #include "traccc/options/threading.hpp"
+// #include "traccc/options/throughput.hpp"
 
 #include "DataStructures.hpp"
 
@@ -123,6 +129,11 @@ struct cell_order {
     }
 };  // struct cell_order
 
+struct TracccResults {
+    traccc::edm::track_fit_container<traccc::default_algebra>::host tracks_and_states;
+    traccc::measurement_collection_types::host measurements;
+};
+
 traccc::magnetic_field make_magnetic_field(std::string filename) {
     traccc::magnetic_field result;
     traccc::io::read_magnetic_field(result, filename, traccc::data_format::binary);
@@ -130,8 +141,8 @@ traccc::magnetic_field make_magnetic_field(std::string filename) {
 }
 
 // Type definitions
-using host_detector_type = traccc::default_detector::host;
-using device_detector_type = traccc::default_detector::device;
+using host_detector_type = traccc::host_detector;
+using device_detector_type = traccc::detector_buffer;
 using scalar_type = traccc::default_detector::host::scalar_type;
 
 using bfield_type =
@@ -140,15 +151,14 @@ using stepper_type =
     detray::rk_stepper<bfield_type::view_t,
                         traccc::default_detector::host::algebra_type,
                         detray::constrained_step<scalar_type>>;
-using navigator_type = detray::navigator<const device_detector_type>;
-using device_navigator_type = detray::navigator<const device_detector_type>;
+// using navigator_type = detray::navigator<const device_detector_type>;
+// using device_navigator_type = detray::navigator<const device_detector_type>;
 
-using spacepoint_formation_algorithm =
-    traccc::cuda::spacepoint_formation_algorithm<
-        traccc::default_detector::device>;
+using spacepoint_formation_algorithm = traccc::cuda::spacepoint_formation_algorithm;
 using clustering_algorithm = traccc::cuda::clusterization_algorithm;
 using finding_algorithm =
     traccc::cuda::combinatorial_kalman_filter_algorithm;
+using host_fitting_algorithm = traccc::host::kalman_fitting_algorithm;
 using fitting_algorithm = traccc::cuda::kalman_fitting_algorithm;
 
 // fitting and finding params
@@ -179,7 +189,7 @@ static traccc::seedfinder_config create_and_setup_finder_config() {
 // Helper function to create and setup seedfilter config
 static traccc::seedfilter_config create_and_setup_filter_config() {
     traccc::seedfilter_config cfg;
-    cfg.maxSeedsPerSpM = 2;
+    // cfg.maxSeedsPerSpM = 2;
     cfg.good_spB_min_radius = 150.f * traccc::unit<float>::mm;
     cfg.good_spB_weight_increase = 400.f;
     cfg.good_spT_max_radius = 150.f * traccc::unit<float>::mm;
@@ -247,20 +257,24 @@ private:
     /// Logger 
     std::unique_ptr<const traccc::Logger> logger;
     /// Host memory resource
-    vecmem::host_memory_resource *m_host_mr;
+    vecmem::memory_resource& m_host_mr;
+    /// Pinned host memory resource
+    vecmem::cuda::host_memory_resource m_pinned_host_mr;
+    /// Cached pinned host memory resource
+    mutable vecmem::binary_page_memory_resource m_cached_pinned_host_mr;
     /// CUDA stream to use
     traccc::cuda::stream m_stream;
     /// Device memory resource
-    vecmem::cuda::device_memory_resource *m_device_mr;
+    vecmem::cuda::device_memory_resource* m_device_mr;
     /// Device caching memory resource
-    std::unique_ptr<vecmem::binary_page_memory_resource> m_cached_device_mr;
+    mutable vecmem::binary_page_memory_resource m_cached_device_mr;
     /// (Asynchronous) memory copy object
     mutable vecmem::cuda::async_copy m_copy;
-    /// Memory resource for the host memory
-    traccc::memory_resource m_mr;
+    // /// Memory resource for the host memory
+    // traccc::memory_resource m_mr;
 
     /// data configuration
-    traccc::geometry m_surface_transforms;
+    // traccc::geometry m_surface_transforms;
     /// digitization configuration
     std::unique_ptr<traccc::digitization_config> m_digi_cfg;
     /// Athena to detray map
@@ -287,8 +301,8 @@ private:
     traccc::seedfilter_config m_filter_config;
 
     /// further configuration
-    /// Configuration for ambiguity resolution
-    traccc::host::greedy_ambiguity_resolution_algorithm::config_type m_resolution_config;
+    // /// Configuration for ambiguity resolution
+    // traccc::host::greedy_ambiguity_resolution_algorithm::config_type m_resolution_config;
     /// Configuration for the track finding
     finding_algorithm::config_type m_finding_config;
     /// Configuration for the track fitting
@@ -304,15 +318,14 @@ private:
     traccc::vector3 m_field_vec;
 
     /// Detector description
-    traccc::silicon_detector_description::host m_det_descr;
+    traccc::silicon_detector_description::host m_det_descr_storage;
+    std::reference_wrapper<const traccc::silicon_detector_description::host>
+        m_det_descr;
     /// Detector description buffer
     traccc::silicon_detector_description::buffer m_device_det_descr;
     /// Host detector
-    std::unique_ptr<host_detector_type> m_detector;
-    /// Buffer holding the detector's payload on the device
-    host_detector_type::buffer_type m_device_detector;
-    /// View of the detector's payload on the device
-    host_detector_type::view_type m_device_detector_view;
+    traccc::host_detector m_detector;
+    traccc::detector_buffer m_device_detector;
 
     /// Sub-algorithms used by this full-chain algorithm
     /// Clusterization algorithm
@@ -326,16 +339,16 @@ private:
     /// Track parameter estimation algorithm
     traccc::cuda::track_params_estimation m_track_parameter_estimation;
 
-    /// Resolution algorithm
-    traccc::cuda::greedy_ambiguity_resolution_algorithm m_resolution;
+    // /// Resolution algorithm
+    // traccc::cuda::greedy_ambiguity_resolution_algorithm m_resolution;
     /// Track finding algorithm
     finding_algorithm m_finding;
     /// Track fitting algorithm
     fitting_algorithm m_fitting;
     
     // copy back!
-    traccc::device::container_d2h_copy_alg<traccc::track_state_container_types>
-        m_copy_track_states;
+    // traccc::device::container_d2h_copy_alg<host_fitting_algorithm::output_type>
+    //     m_copy_track_states;
 
     // Helper function to read in cells
     std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>> read_all_cells(
@@ -349,50 +362,52 @@ private:
 
 public:
     TracccGpuStandalone( 
-        vecmem::host_memory_resource *host_mr,
-        vecmem::cuda::device_memory_resource *device_mr,
+        vecmem::host_memory_resource* host_mr,
+        vecmem::cuda::device_memory_resource* device_mr,
         int deviceID = 0,
         const std::string& geoDir = "/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-01/itk-geo/") :
             m_device_id(deviceID), 
             m_geoDir(geoDir),
             logger(traccc::getDefaultLogger("TracccGpuStandalone", traccc::Logging::Level::INFO)),
-            m_host_mr(host_mr),
+            m_host_mr(*host_mr),
+            m_pinned_host_mr(),
+            m_cached_pinned_host_mr(m_pinned_host_mr),
             m_stream(setCudaDeviceAndGetStream(deviceID)),
             m_device_mr(device_mr),
-            m_cached_device_mr(
-                std::make_unique<vecmem::binary_page_memory_resource>(*m_device_mr)),
+            m_cached_device_mr(*m_device_mr),
             m_copy(m_stream.cudaStream()),
-            m_mr{*m_cached_device_mr, m_host_mr},
             m_propagation_config(m_propagation_opts),
             m_clustering_config{256, 16, 8, 256},
-            m_finder_config(create_and_setup_finder_config()), // Initialize m_finder_config using the helper
-            m_grid_config(m_finder_config), 
+            m_finder_config(create_and_setup_finder_config()),
+            m_grid_config(m_finder_config),
             m_filter_config(create_and_setup_filter_config()), 
-            m_resolution_config(),
             m_finding_config(create_and_setup_finding_config()), 
             m_fitting_config(create_and_setup_fitting_config()), 
             m_bfield_opts(),
             m_host_field(make_magnetic_field(geoDir + "ITk_bfield.cvf")),
             m_field(traccc::cuda::make_magnetic_field(m_host_field)),
             m_field_vec({0.f, 0.f, m_bfield_opts.value}),
-            m_det_descr{*m_host_mr},
-            m_clusterization(m_mr, m_copy, m_stream, m_clustering_config),
-            m_measurement_sorting(m_mr, m_copy, m_stream, 
-                logger->cloneWithSuffix("MeasSortingAlg")),
-            m_spacepoint_formation(m_mr, m_copy, m_stream,
-                logger->cloneWithSuffix("SpFormationAlg")),
-            m_seeding(m_finder_config, m_grid_config, m_filter_config, 
-                        m_mr, m_copy, m_stream,
-                        logger->cloneWithSuffix("SeedingAlg")),
-            m_track_parameter_estimation(m_mr, m_copy, m_stream,
+            m_det_descr_storage(m_host_mr),
+            m_det_descr(m_det_descr_storage),
+            m_device_det_descr(0, *m_device_mr),
+            m_clusterization({m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy,
+                            m_stream, m_clustering_config),
+            m_measurement_sorting({m_cached_device_mr, &m_cached_pinned_host_mr},
+                                    m_copy, m_stream,
+                                    logger->cloneWithSuffix("MeasSortingAlg")),
+            m_spacepoint_formation({m_cached_device_mr, &m_cached_pinned_host_mr},
+                                    m_copy, m_stream,
+                                    logger->cloneWithSuffix("SpFormationAlg")),
+            m_seeding(m_finder_config, m_grid_config, m_filter_config,
+                        {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy,
+                        m_stream, logger->cloneWithSuffix("SeedingAlg")),
+            m_track_parameter_estimation(
+                {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy, m_stream,
                 logger->cloneWithSuffix("TrackParEstAlg")),
-            m_resolution(m_resolution_config, m_mr, m_copy, m_stream,
-                logger->cloneWithSuffix("ResolutionAlg")),
-            m_finding(m_finding_config, m_mr, m_copy, m_stream, 
-                logger->cloneWithSuffix("TrackFindingAlg")),
-            m_fitting(m_fitting_config, m_mr, m_copy, m_stream, 
-                logger->cloneWithSuffix("TrackFittingAlg")),
-            m_copy_track_states(m_mr, m_copy, logger->cloneWithSuffix("TrackStateD2HCopyAlg"))
+            m_finding(m_finding_config, {m_cached_device_mr, &m_cached_pinned_host_mr},
+                        m_copy, m_stream, logger->cloneWithSuffix("TrackFindingAlg")),
+            m_fitting(m_fitting_config, {m_cached_device_mr, &m_cached_pinned_host_mr},
+                        m_copy, m_stream, logger->cloneWithSuffix("TrackFittingAlg"))
     {
         // Tell the user what device is being used.
         int device = 0;
@@ -426,8 +441,7 @@ public:
 
     void initialize();
 
-    traccc::track_state_container_types::host run(
-        std::vector<traccc::io::csv::cell> cells);
+    TracccResults run(std::vector<traccc::io::csv::cell> cells);
 
 };
 
@@ -435,10 +449,10 @@ public:
 void TracccGpuStandalone::initialize()
 {
     // HACK: hard code location of detector and digitization file
-    m_detector_opts.detector_file = m_geoDir + "/ITk_DetectorBuilder_geometry.json";
-    m_detector_opts.digitization_file = m_geoDir + "/ITk_digitization_config_with_strips_with_shift_annulus_flip.json";
-    m_detector_opts.grid_file = m_geoDir + "/ITk_DetectorBuilder_surface_grids.json";
-    m_detector_opts.material_file = m_geoDir + "/ITk_detector_material.json";
+    m_detector_opts.detector_file = m_geoDir + "/detray_detector_geometry.json";
+    m_detector_opts.digitization_file = m_geoDir + "/ITk_digitization_config.json";
+    m_detector_opts.grid_file = m_geoDir + "/detray_detector_surface_grids.json";
+    m_detector_opts.material_file = m_geoDir + "/detray_detector_material_maps.json";
 
     // Load Athena-to-Detray mapping
     std::string athenaTransformsPath = m_geoDir + "/athenaIdentifierToDetrayMap.txt";
@@ -450,49 +464,44 @@ void TracccGpuStandalone::initialize()
         m_detray_to_athena_map[detray_id] = athena_id;
     }
 
-    // Read the detector description
+     // Read the detector description
     traccc::io::read_detector_description(
-        m_det_descr, m_detector_opts.detector_file,
+        m_det_descr_storage, m_detector_opts.detector_file,
         m_detector_opts.digitization_file, traccc::data_format::json);
-    traccc::silicon_detector_description::data m_det_descr_data{
-        vecmem::get_data(m_det_descr)};
+    auto m_det_descr_data = vecmem::get_data(m_det_descr_storage);
     m_device_det_descr = traccc::silicon_detector_description::buffer(
             static_cast<traccc::silicon_detector_description::buffer::size_type>(
-                m_det_descr.size()),
-            *m_device_mr);
+                m_det_descr_storage.size()), *m_device_mr);
     m_copy.setup(m_device_det_descr)->wait();
     m_copy(m_det_descr_data, m_device_det_descr)->wait();
 
     // fill the det description to geometry id map
     m_geomIdMap.clear();
-    m_geomIdMap.reserve(m_det_descr.geometry_id().size());
-    for (unsigned int i = 0; i < m_det_descr.geometry_id().size(); ++i) {
-        m_geomIdMap[m_det_descr.geometry_id()[i].value()] = i;
+    m_geomIdMap.reserve(m_det_descr_storage.geometry_id().size());
+    for (unsigned int i = 0; i < m_det_descr_storage.geometry_id().size(); ++i) {
+        m_geomIdMap[m_det_descr_storage.geometry_id()[i].value()] = i;
     }
 
-    // Create the detector and read the configuration file
-    m_detector = std::make_unique<host_detector_type>(*m_host_mr);
+    // Construct a Detray detector object, if supported by the configuration.
     traccc::io::read_detector(
-        *m_detector, *m_host_mr, m_detector_opts.detector_file,
+        m_detector, m_host_mr, m_detector_opts.detector_file,
         m_detector_opts.material_file, m_detector_opts.grid_file);
-    
-    // copy it to the device - dereference the unique_ptr to get the actual object
-    m_device_detector = detray::get_buffer(*m_detector, *m_device_mr, m_copy);
+    m_device_detector =
+        traccc::buffer_from_host_detector(m_detector, *m_device_mr, m_copy);
     m_stream.synchronize();
-    m_device_detector_view = detray::get_data(m_device_detector);
 
     return;
 }
 
-traccc::track_state_container_types::host TracccGpuStandalone::run(
+TracccResults TracccGpuStandalone::run(
     std::vector<traccc::io::csv::cell> cells
 ) {
-    traccc::edm::silicon_cell_collection::host read_out(*m_mr.host);
-    
-    read_cells(read_out, cells, &m_det_descr, true, false);
+
+    traccc::edm::silicon_cell_collection::host read_out(m_host_mr);
+    read_cells(read_out, cells, &m_det_descr_storage, true, false);
 
     traccc::edm::silicon_cell_collection::buffer cells_buffer(
-        static_cast<unsigned int>(read_out.size()), *m_cached_device_mr);
+        static_cast<unsigned int>(read_out.size()), m_cached_device_mr);
     m_copy(vecmem::get_data(read_out), cells_buffer)->ignore();
 
     traccc::measurement_collection_types::buffer measurements =
@@ -500,7 +509,7 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
     m_measurement_sorting(measurements);
 
     traccc::edm::spacepoint_collection::buffer spacepoints =
-        m_spacepoint_formation(m_device_detector_view, measurements);
+        m_spacepoint_formation(m_device_detector, measurements);
 
     traccc::edm::seed_collection::buffer seeds = m_seeding(spacepoints);
 
@@ -508,48 +517,29 @@ traccc::track_state_container_types::host TracccGpuStandalone::run(
         m_track_parameter_estimation(measurements, spacepoints,
             seeds, m_field_vec);
     const finding_algorithm::output_type track_candidates = m_finding(
-        m_device_detector_view, m_field, measurements, track_params); 
+        m_device_detector, m_field, measurements, track_params); 
 
     //  // Run the resolution algorithm on the candidates
     // traccc::edm::track_candidate_collection<traccc::default_algebra>::buffer 
     //     res_track_candidates = m_resolution({track_candidates, measurements});
 
-    // Run the track fitting
-    // start = std::chrono::high_resolution_clock::now();
-    const fitting_algorithm::output_type track_states = 
-        m_fitting(m_device_detector_view, m_field, 
-            {track_candidates, measurements});
+    const fitting_algorithm::output_type track_states = m_fitting(
+        m_device_detector, m_field, {track_candidates, measurements});
 
-    // Print fitting stats
-    // TODO: remove this in production code, add ability to select at initialization
-    // std::cout << "Number of measurements: " << m_copy.get_size(measurements) << std::endl;
-    // std::cout << "Number of spacepoints: " << m_copy.get_size(spacepoints) << std::endl;
-    // std::cout << "Number of seeds: " << m_copy.get_size(seeds) << std::endl;
-    // std::cout << "Number of track params: " << m_copy.get_size(track_params) << std::endl;
-    // std::cout << "Number of track candidates: " << m_copy.get_size(track_candidates) << std::endl;
-    // // std::cout << "Number of resolved track candidates: " << m_copy.get_size(res_track_candidates) << std::endl;
-    // std::cout << "Number of fitted tracks: " << track_states.headers.size() << std::endl;
+    // Copy result data back to the host
+    traccc::edm::track_fit_container<traccc::default_algebra>::host
+        track_states_host{m_host_mr};
 
-    auto track_states_host = m_copy_track_states(track_states);
+    m_copy(track_states.tracks, track_states_host.tracks,
+            vecmem::copy::type::device_to_host)->wait();
+    m_copy(track_states.states, track_states_host.states,
+            vecmem::copy::type::device_to_host)->wait();
 
-    traccc::track_state_container_types::host filtered_track_states;
-    size_t initial_count = track_states_host.size();
+    // copy measurements back to host
+    traccc::measurement_collection_types::host measurements_host;
+    m_copy(measurements, measurements_host, vecmem::copy::type::device_to_host)->wait();
 
-    for (size_t i = 0; i < initial_count; ++i) {
-        const auto& [header, items] = track_states_host.at(i);
-        if (header.trk_quality.ndf >= 1) {
-            filtered_track_states.push_back(header, items);
-        }
-    }
-
-    size_t removed_count = initial_count - filtered_track_states.size();
-    if (removed_count > 0) {
-        std::cout << "Warning: " << removed_count 
-                  << " tracks failed to fit (ndf < 1) and were removed." 
-                  << std::endl;
-    }
-
-    return filtered_track_states;
+    return {track_states_host, measurements_host};
 }
 
 std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(
