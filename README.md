@@ -10,7 +10,7 @@ A minimal description of how to build a working version is detailed below. In ea
 
 ## Obtaining the `ITk` geometry files
 
-You will need access to the `ITk` geometry files to run this repository, which can be found at `/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/` on CERN's `lxplus` computing cluster. Note that to access these, you must be a part of the e-group `atlas-tdaq-phase2-EFTracking-developers`. If you are outside of ATLAS, please refer to the `main` branch to run the ODD version of the code.
+You will need access to the `ITk` geometry files to run this repository, which can be found at `/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/` on CERN's `lxplus` computing cluster. Note that to access these, you must be a part of the e-group `atlas-tdaq-phase2-EFTracking-developers`. If you are outside of ATLAS, please refer to the `odd_legacy` branch to run the ODD version of the code.
 
 ## Running out of the box
 
