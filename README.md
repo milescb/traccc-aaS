@@ -45,7 +45,8 @@ cd traccc-aaS && git checkout itk-hits-to-tracks
 The easiest way to build the custom backend is with the docker at `docker.io/milescb/triton-server:25.02-py3_gcc13.3`. Run this interactively with
 
 ```
-shifter --module=gpu --image=milescb/tritonserver:triton-server:25.02-py3_gcc13.3
+shifterimg pull milescb/triton-server:25.02-py3_gcc13.3
+shifter --module=gpu --image=milescb/triton-server:25.02-py3_gcc13.3
 ```
 
 or use your favorite docker application and mount the appropriate directories. 
