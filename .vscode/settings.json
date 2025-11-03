@@ -135,7 +135,8 @@
         "source_location": "cpp",
         "format": "cpp",
         "stdfloat": "cpp",
-        "stream_ref": "cpp"
+        "stream_ref": "cpp",
+        "alignedvector3": "cpp"
     },
     "python-envs.defaultEnvManager": "ms-python.python:system",
     "python-envs.pythonProjects": []

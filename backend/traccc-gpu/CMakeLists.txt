@@ -59,6 +59,16 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Set optimization flags based on build type
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  message(STATUS "Building in Release mode with optimizations")
+  set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+  set(CMAKE_CUDA_FLAGS_RELEASE "-O3 -DNDEBUG")
+elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -DNDEBUG")
+  set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "-O2 -g -DNDEBUG")
+endif()
+
 #
 # Dependencies
 #
@@ -119,8 +129,14 @@ target_compile_features(triton-traccc-backend PRIVATE cxx_std_${TRITON_MIN_CXX_S
 target_compile_options(
   triton-traccc-backend PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
-    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Werror>
-  $<$<CXX_COMPILER_ID:MSVC>:/Wall /D_WIN32_WINNT=0x0A00 /EHsc /Zc:preprocessor>
+    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Werror
+    $<$<CONFIG:Release>:-O3 -march=native -mtune=native>
+    $<$<CONFIG:RelWithDebInfo>:-O2 -g>
+    $<$<CONFIG:Debug>:-O0 -g>>
+  $<$<CXX_COMPILER_ID:MSVC>:/Wall /D_WIN32_WINNT=0x0A00 /EHsc /Zc:preprocessor
+    $<$<CONFIG:Release>:/O2 /Ob2 /DNDEBUG>
+    $<$<CONFIG:RelWithDebInfo>:/O2 /Ob1 /Zi>
+    $<$<CONFIG:Debug>:/Od /Zi>>
 )
 
 target_link_libraries(
