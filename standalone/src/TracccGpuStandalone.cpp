@@ -54,7 +54,7 @@ int main(int argc, char *argv[])
     std::vector<traccc::io::csv::cell> cells = read_csv(
         event_file, traccc_gpu.getAthenaToDetrayMap(), true);
 
-    auto traccc_result = traccc_gpu.run(cells);
+    auto traccc_result = traccc_gpu.run(cells, true);
 
     int total_tracks = traccc_result.tracks_and_states.tracks.size();
     int excluded_non_positive_ndf = 0;

@@ -682,7 +682,7 @@ TRITONBACKEND_ModelInstanceExecute(
               << " ms" << std::endl;
 
     // run the reco chain
-    auto traccc_result = instance_state->traccc_gpu_standalone_->run(cells);
+    auto traccc_result = instance_state->traccc_gpu_standalone_->run(cells, true);
 
     auto output_proc_start = std::chrono::high_resolution_clock::now();
 
