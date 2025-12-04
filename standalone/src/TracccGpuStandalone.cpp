@@ -81,7 +81,7 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        if (track.state_indices().size() < 1) {
+        if (track.constituent_links().size() < 1) {
             excluded_no_state += 1;
             continue;
         }
@@ -98,32 +98,32 @@ int main(int argc, char *argv[])
                   << ", q/p = " << qop
                   << std::endl;
 
-        for (size_t j = 0; j < track.state_indices().size(); ++j)
+        const auto& constituent_links = track.constituent_links();
+        for (size_t j = 0; j < constituent_links.size(); ++j)
         {
-            // extract measurement information
-            size_t state_idx = track.state_indices().at(j);
-            auto const& state = traccc_result.tracks_and_states.states.at(state_idx);
-            traccc::measurement const& measurement =
-                traccc_result.measurements.at(state.measurement_index());
+            const auto& link = constituent_links[j];
+            
+            if (link.type != traccc::edm::track_constituent_link::track_state) {
+                continue;
+            }
 
-            const std::array<float, 2> localPosition = measurement.local;
-            const std::array<float, 2> localCovariance = measurement.variance;
-            uint64_t detray_id = measurement.surface_link.value();
-            float time = measurement.time;
-            size_t measurement_id = measurement.measurement_id;
-            unsigned int measDim = measurement.meas_dim;
+            const auto& state = traccc_result.tracks_and_states.states.at(link.index);
+            size_t meas_idx = state.measurement_index();
 
-            std::cout << "  Measurement ID: " << measurement_id
-                      << ", Detected at detray ID: " << detray_id
-                      << ", Local Position: (" << localPosition[0] << ", " 
-                      << localPosition[1] << ")"
-                      << ", Local Covariance: (" << localCovariance[0] << ", "
-                      << localCovariance[1] << ")"
-                      << ", Time: " << time
-                      << ", Measurement Dimension: " << measDim
+            std::cout << "  Smoothed parameters: " << state.smoothed_params() << std::endl;
+
+            const auto& measurement = traccc_result.measurements.at(meas_idx);
+
+            std::cout << "  Measurement ID: " << measurement.identifier()
+                      << ", Detected at detray ID: " << measurement.surface_link().value()
+                      << ", Local Position: (" << measurement.local_position()[0] << ", " 
+                      << measurement.local_position()[1] << ")"
+                      << ", Local Variance: (" << measurement.local_variance()[0] << ", "
+                      << measurement.local_variance()[1] << ")"
+                      << ", Time: " << measurement.time()
+                      << ", Measurement Dimension: " << measurement.dimensions()
                       << std::endl;
         }
-
         ++printed_tracks;
     }
 
