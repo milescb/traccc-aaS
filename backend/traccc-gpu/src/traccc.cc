@@ -751,8 +751,8 @@ TRITONBACKEND_ModelInstanceExecute(
                 continue;
             }
 
-            if (track.state_indices().size() < 1) {
-                ++excluded_no_state;
+            if (track.constituent_links().size() < 1) {
+                excluded_no_state += 1;
                 continue;
             }
 
@@ -775,19 +775,26 @@ TRITONBACKEND_ModelInstanceExecute(
             trk_params_buffer.push_back(static_cast<float>(qop));
 
             // --- Process Measurements for this track ---
-            for (size_t j = 0; j < track.state_indices().size(); ++j) {
-                size_t state_idx = track.state_indices().at(j);
+            const auto& constituent_links = track.constituent_links();
+            for (size_t j = 0; j < constituent_links.size(); ++j) {
+                const auto& link = constituent_links[j];
+                
+                if (link.type != traccc::edm::track_constituent_link::track_state) {
+                    continue;
+                }
+                
+                size_t state_idx = link.index;
                 auto const& state = traccc_result.tracks_and_states.states.at(state_idx);
-                traccc::measurement const& measurement =
+                auto const& measurement =
                     traccc_result.measurements.at(state.measurement_index());
                 
                 // Use the measurement local position and variance
-                measurements_buffer.push_back(measurement.local[0]); // local x
-                measurements_buffer.push_back(measurement.local[1]); // local y
-                measurements_buffer.push_back(measurement.variance[0]); // var x
-                measurements_buffer.push_back(measurement.variance[1]); // var y
+                measurements_buffer.push_back(measurement.local_position()[0]); // local x
+                measurements_buffer.push_back(measurement.local_position()[1]); // local y
+                measurements_buffer.push_back(measurement.local_variance()[0]); // var x
+                measurements_buffer.push_back(measurement.local_variance()[1]); // var y
 
-                uint64_t detray_id = measurement.surface_link.value();
+                uint64_t detray_id = measurement.surface_link().value();
                 try {
                     geometry_ids_buffer.push_back(
                         instance_state->traccc_gpu_standalone_->getDetrayToAthenaMap().at(detray_id));
