@@ -16,12 +16,17 @@ output [
   {
     name: "TRK_PARAMS"
     data_type: TYPE_FP32
-    dims: [ -1, 5 ]
+    dims: [ -1, 2 ]
   },
   {
     name: "MEASUREMENTS"
     data_type: TYPE_FP32
-    dims: [ -1, 4 ]
+    dims: [ -1, 6 ]
+  },
+  {
+    name: "COVARIANCES"
+    data_type: TYPE_FP32
+    dims: [-1, 36]
   },
   {
     name: "GEOMETRY_IDS"

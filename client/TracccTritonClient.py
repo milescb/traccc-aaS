@@ -54,8 +54,9 @@ def main():
 
     # Specify outputs
     output_names = [
-        "TRK_PARAMS",      # [n_tracks, 5] - chi2, ndf, phi, theta, qop
-        "MEASUREMENTS",    # [total_meas_with_seps, 4] - localx, localy, varx, vary with -1 separators
+        "TRK_PARAMS",      # [n_tracks, 2] - chi2, ndf
+        "MEASUREMENTS",    # [total_meas_with_seps, 6] - localx, localy, phi, theta, qop, time
+        "COVARIANCES",     # [total_meas_with_seps, 36] - 6x6 covariance matrix flattened
         "GEOMETRY_IDS"     # [total_meas_with_seps] - geometry IDs with 0 separators
     ]
     outputs = [grpcclient.InferRequestedOutput(name) for name in output_names]
@@ -68,82 +69,78 @@ def main():
     )
 
     # Retrieve and process outputs
-    trk_params = result.as_numpy("TRK_PARAMS")       # [n_tracks, 5]
-    measurements = result.as_numpy("MEASUREMENTS")   # [total_meas_with_seps, 4]
+    trk_params = result.as_numpy("TRK_PARAMS")       # [n_tracks, 2]
+    measurements = result.as_numpy("MEASUREMENTS")   # [total_meas_with_seps, 6]
+    covariances = result.as_numpy("COVARIANCES")     # [total_meas_with_seps, 36]
     geometry_ids = result.as_numpy("GEOMETRY_IDS")   # [total_meas_with_seps]
     
     # Extract track parameters
     chi2 = trk_params[:, 0]
     ndf = trk_params[:, 1]
-    phi = trk_params[:, 2]
-    theta = trk_params[:, 3]
-    qop = trk_params[:, 4]
     
-    # Parse flattened measurements and geometry IDs into awkward arrays
-    # Find separator indices (where all measurement values are -1)
-    separator_mask = (measurements[:, 0] == -1) & (measurements[:, 1] == -1) & \
-                     (measurements[:, 2] == -1) & (measurements[:, 3] == -1)
-    
-    # Get separator positions
-    separator_indices = np.where(separator_mask)[0]
-    
-    # Split measurements into tracks using separators
+    # Reconstruct tracks using geometry_id separators (gid == 0)
     track_measurements = []
+    track_covariances = []
     track_geometry_ids = []
-    
-    start_idx = 0
-    for sep_idx in separator_indices:
-        # Extract measurements for this track
-        track_meas = measurements[start_idx:sep_idx]
-        track_geo = geometry_ids[start_idx:sep_idx]
-        
-        track_measurements.append(track_meas)
-        track_geometry_ids.append(track_geo)
-        
-        start_idx = sep_idx + 1
-    
-    # Don't forget the last track (after the last separator)
-    if start_idx < len(measurements):
-        track_measurements.append(measurements[start_idx:])
-        track_geometry_ids.append(geometry_ids[start_idx:])
-    
-    # Create awkward arrays for ragged data
-    ak_measurements = ak.Array(track_measurements)  # [n_tracks][variable_meas, 4]
-    ak_geometry_ids = ak.Array(track_geometry_ids)  # [n_tracks][variable_meas]
-    
-    # Extract components as awkward arrays
-    ak_local_x = ak_measurements[:, :, 0]    # [n_tracks][variable_meas]
-    ak_local_y = ak_measurements[:, :, 1]    # [n_tracks][variable_meas]
-    ak_var_x = ak_measurements[:, :, 2]      # [n_tracks][variable_meas]
-    ak_var_y = ak_measurements[:, :, 3]      # [n_tracks][variable_meas]
-    
-    # For printing measurement dimensions
-    local_x = ak.flatten(ak_local_x)
-    measurement_dims = np.full(len(local_x), 2, dtype=np.uint32)
-    
+
+    cur_meas = []
+    cur_cov = []
+    cur_geo = []
+    meas_idx = 0
+    for gid in geometry_ids:
+        if gid == 0:
+            if cur_meas:
+                track_measurements.append(np.stack(cur_meas))
+                track_covariances.append(np.stack(cur_cov))
+                track_geometry_ids.append(np.stack(cur_geo))
+                cur_meas, cur_cov, cur_geo = [], [], []
+            continue
+        if meas_idx >= len(measurements):
+            break
+        cur_meas.append(measurements[meas_idx])
+        cur_cov.append(covariances[meas_idx])
+        cur_geo.append(gid)
+        meas_idx += 1
+    if cur_meas:
+        track_measurements.append(np.stack(cur_meas))
+        track_covariances.append(np.stack(cur_cov))
+        track_geometry_ids.append(np.stack(cur_geo))
+
+    ak_measurements = ak.Array(track_measurements)
+    ak_covariances = ak.Array(track_covariances)
+    ak_geometry_ids = ak.Array(track_geometry_ids)
+
     print(f"Number of tracks: {len(trk_params)}")
     print(f"Number of measurements per track: {ak.num(ak_measurements, axis=1)}")
     print(f"Total measurements: {ak.sum(ak.num(ak_measurements, axis=1))}")
     print(f"Track parameters shape: {trk_params.shape}")
     print(f"Awkward measurements shape: {ak_measurements.type}")
+    print(f"Awkward covariances shape: {ak_covariances.type}")
     print(f"Awkward geometry IDs shape: {ak_geometry_ids.type}")
-    
-    # Example: Access measurements for specific tracks
-    print(f"\nTrack 0 has {len(ak_measurements[0])} measurements:")
-    print(f"  Local positions: {ak_measurements[0][:, :2]}")
-    print(f"  Geometry IDs: {ak_geometry_ids[0]}")
-    
+
+    # Extract variances from covariances (diag elements 0 and 7)
+    ak_var_x = ak.Array([[cov[0] for cov in covs] for covs in track_covariances])
+    ak_var_y = ak.Array([[cov[7] for cov in covs] for covs in track_covariances])
+
+    # Example: Access measurements for first tracks
+    if len(ak_measurements) > 0:
+        print(f"\nTrack 0 has {len(ak_measurements[0])} measurements:")
+        print(f"  Local positions: {ak_measurements[0]}")
+        print(f"  Local variances (from diagonal): x={ak_var_x[0]}, y={ak_var_y[0]}")
+        print(f"  Geometry IDs: {ak_geometry_ids[0]}")
     if len(ak_measurements) > 1:
         print(f"\nTrack 1 has {len(ak_measurements[1])} measurements:")
-        print(f"  Local positions: {ak_measurements[1][:, :2]}")
+        print(f"  Local positions: {ak_measurements[1]}")
+        print(f"  Local variances (from diagonal): x={ak_var_x[1]}, y={ak_var_y[1]}")
         print(f"  Geometry IDs: {ak_geometry_ids[1]}")
-    
-    # Plot histograms using flattened data
+
+    # Plot histograms
     plot_histogram(chi2, "Chi2", "Chi2")
     plot_histogram(ndf, "NDF", "NDF")
-    plot_histogram(phi, "Phi", "Phi [rad]")
-    plot_histogram(theta, "Theta", "Theta [rad]")
-    plot_histogram(qop, "Q_over_P", "Charge/Momentum [1/GeV]")
+    
+    # Plot variances extracted from covariance matrices
+    plot_histogram(ak.flatten(ak_var_x).to_numpy(), "Var_X", "Local X Variance")
+    plot_histogram(ak.flatten(ak_var_y).to_numpy(), "Var_Y", "Local Y Variance")
     
     # Additional awkward array operations
     print(f"\nAwkward array operations:")

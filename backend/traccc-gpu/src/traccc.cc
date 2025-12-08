@@ -276,8 +276,8 @@ ModelState::ValidateModelConfig()
         inputs.ArraySize() == 2, TRITONSERVER_ERROR_INVALID_ARG,
         std::string("model configuration must have 2 inputs"));
     RETURN_ERROR_IF_FALSE(
-        outputs.ArraySize() == 3, TRITONSERVER_ERROR_INVALID_ARG,
-        std::string("model configuration must have 3 outputs"));
+        outputs.ArraySize() == 4, TRITONSERVER_ERROR_INVALID_ARG,
+        std::string("model configuration must have 4 outputs"));
 
     common::TritonJson::Value input_cell_positions, input_cell_properties, output;
     RETURN_IF_ERROR(inputs.IndexAsObject(0, &input_cell_positions));
@@ -719,10 +719,12 @@ TRITONBACKEND_ModelInstanceExecute(
         // Buffers for the output tensors
         std::vector<float> trk_params_buffer;
         std::vector<float> measurements_buffer;
+        std::vector<float> covariances_buffer;
         std::vector<int64_t> geometry_ids_buffer;
 
-        trk_params_buffer.reserve(num_tracks * 5);
-        measurements_buffer.reserve(num_tracks * 15 * 4); 
+        trk_params_buffer.reserve(num_tracks * 2);
+        measurements_buffer.reserve(num_tracks * 15 * 6); 
+        covariances_buffer.reserve(num_tracks * 15 * 36);
         geometry_ids_buffer.reserve(num_tracks * 15);
 
         // Track exclusion counters
@@ -753,21 +755,12 @@ TRITONBACKEND_ModelInstanceExecute(
 
             // Add separator before this track's measurements, if it's not the first included track
             if (included_tracks > 0) {
-                measurements_buffer.insert(measurements_buffer.end(), {-1.0, -1.0, -1.0, -1.0});
                 geometry_ids_buffer.push_back(0);
             }
 
-            // --- Process Track Parameters ---
-            const auto& fitted_params = track.params();
-            traccc::scalar phi = fitted_params.phi();
-            traccc::scalar theta = fitted_params.theta();
-            traccc::scalar qop = fitted_params.qop();
-            
+            // --- Process Track Parameters ---            
             trk_params_buffer.push_back(static_cast<float>(track.chi2()));
             trk_params_buffer.push_back(static_cast<float>(track.ndf()));
-            trk_params_buffer.push_back(static_cast<float>(phi));
-            trk_params_buffer.push_back(static_cast<float>(theta));
-            trk_params_buffer.push_back(static_cast<float>(qop));
 
             // --- Process Measurements for this track ---
             const auto& constituent_links = track.constituent_links();
@@ -786,8 +779,20 @@ TRITONBACKEND_ModelInstanceExecute(
                 // Use the measurement local position and variance
                 measurements_buffer.push_back(measurement.local_position()[0]); // local x
                 measurements_buffer.push_back(measurement.local_position()[1]); // local y
-                measurements_buffer.push_back(measurement.local_variance()[0]); // var x
-                measurements_buffer.push_back(measurement.local_variance()[1]); // var y
+
+                auto const& smoothed_params = state.smoothed_params();
+                measurements_buffer.push_back(smoothed_params.phi());
+                measurements_buffer.push_back(smoothed_params.theta());
+                measurements_buffer.push_back(smoothed_params.qop());
+                measurements_buffer.push_back(smoothed_params.time());
+
+                auto const& cov = state.smoothed_params().covariance();
+                // Covariance matrix (6x6) flattened in row-major order
+                for (size_t row = 0; row < 6; ++row) {
+                    for (size_t col = 0; col < 6; ++col) {
+                        covariances_buffer.push_back(static_cast<float>(cov[row][col]));
+                    }
+                }
 
                 uint64_t detray_id = measurement.surface_link().value();
                 try {
@@ -813,17 +818,24 @@ TRITONBACKEND_ModelInstanceExecute(
                      ", Included: " + std::to_string(included_tracks)).c_str());
 
         // --- Send 'TRK_PARAMS' tensor ---
-        std::vector<int64_t> trk_params_shape = {static_cast<int64_t>(included_tracks), 5};
+        std::vector<int64_t> trk_params_shape = {static_cast<int64_t>(included_tracks), 2};
         responder.ProcessTensor(
             "TRK_PARAMS", TRITONSERVER_TYPE_FP32, trk_params_shape,
             reinterpret_cast<const char*>(trk_params_buffer.data()),
             TRITONSERVER_MEMORY_CPU, 0);
 
         // --- Send 'MEASUREMENTS' tensor ---
-        std::vector<int64_t> measurements_shape = {static_cast<int64_t>(measurements_buffer.size() / 4), 4};
+        std::vector<int64_t> measurements_shape = {static_cast<int64_t>(measurements_buffer.size() / 6), 6};
         responder.ProcessTensor(
             "MEASUREMENTS", TRITONSERVER_TYPE_FP32, measurements_shape,
             reinterpret_cast<const char*>(measurements_buffer.data()),
+            TRITONSERVER_MEMORY_CPU, 0);
+
+        // --- Send 'COVARIANCES' tensor ---
+        std::vector<int64_t> covariances_shape = {static_cast<int64_t>(covariances_buffer.size() / 36), 36};
+        responder.ProcessTensor(
+            "COVARIANCES", TRITONSERVER_TYPE_FP32, covariances_shape,
+            reinterpret_cast<const char*>(covariances_buffer.data()),
             TRITONSERVER_MEMORY_CPU, 0);
 
         // --- Send 'GEOMETRY_IDS' tensor ---
