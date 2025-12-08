@@ -755,9 +755,9 @@ TRITONBACKEND_ModelInstanceExecute(
 
             // Add separator before this track's measurements, if it's not the first included track
             if (included_tracks > 0) {
-                // TODO: may not need the first two of these
-                measurements_buffer.insert(measurements_buffer.end(), 6, -1.0f);
-                covariances_buffer.insert(covariances_buffer.end(), 36, 0.0f);
+                // // TODO: may not need the first two of these
+                // measurements_buffer.insert(measurements_buffer.end(), 6, -1.0f);
+                // covariances_buffer.insert(covariances_buffer.end(), 36, 0.0f);
                 geometry_ids_buffer.push_back(0);
             }
 
