@@ -738,19 +738,14 @@ TRITONBACKEND_ModelInstanceExecute(
 
             // Check track fit outcome
             auto track_fit_outcome = track.fit_outcome();
-            if (track_fit_outcome ==
-                traccc::track_fit_outcome::FAILURE_NON_POSITIVE_NDF) {
-                ++excluded_non_positive_ndf;
-                continue;
-            } else if (track_fit_outcome ==
-                       traccc::track_fit_outcome::FAILURE_NOT_ALL_SMOOTHED) {
-                ++excluded_not_all_smoothed;
-                continue;
-            } else if (track_fit_outcome == traccc::track_fit_outcome::UNKNOWN) {
+            if (track_fit_outcome != traccc::track_fit_outcome::SUCCESS) {
                 ++excluded_unknown;
                 continue;
             }
-
+            if (track.ndf() < 0) {
+                excluded_non_positive_ndf += 1;
+                continue;
+            }
             if (track.constituent_links().size() < 1) {
                 excluded_no_state += 1;
                 continue;

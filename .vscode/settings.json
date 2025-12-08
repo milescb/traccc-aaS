@@ -7,18 +7,19 @@
         "-DTRACCC_BUILD_EXAMPLES=ON",
         "-DTRACCC_USE_ROOT=FALSE",
         "-DCMAKE_CUDA_ARCHITECTURES=80",
+        "-DTRACCC_SUPPORTED_DETECTORS=itk_detector;odd_detector"
     ],
     "cmake.parallelJobs": 20,
-    "cmake.buildDirectory": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_120425//build",
-    "cmake.installPrefix": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_120425//install",
+    "cmake.buildDirectory": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_120825/build",
+    "cmake.installPrefix": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_120825/install",
     "cmake.configureOnOpen": false,
     "terminal.integrated.env.linux": {
         "SOURCEDIR": "${workspaceFolder}/standalone",
-        "BUILDDIR": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_120425//build",
-        "INSTALLDIR": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_120425//install",
+        "BUILDDIR": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_120825/build",
+        "INSTALLDIR": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_120825/install",
         "DATADIR": "/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-01/",
-        "PATH": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_120425//install/bin:${env:PATH}",
-        "LD_LIBRARY_PATH": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_120425//install/lib:${env:LD_LIBRARY_PATH}"
+        "PATH": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_120825/install/bin:${env:PATH}",
+        "LD_LIBRARY_PATH": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/ver_120825/install/lib:${env:LD_LIBRARY_PATH}"
     },
     "todo.embedded.exclude": [
         "${workspaceFolder}/traccc/**",

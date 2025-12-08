@@ -68,18 +68,20 @@ int main(int argc, char *argv[])
         const auto& track = traccc_result.tracks_and_states.tracks.at(i);
 
         auto track_fit_outcome = track.fit_outcome();
-        if (track_fit_outcome ==
-            traccc::track_fit_outcome::FAILURE_NON_POSITIVE_NDF) {
-            ++excluded_non_positive_ndf;
-            continue;
-        } else if (track_fit_outcome ==
-                   traccc::track_fit_outcome::FAILURE_NOT_ALL_SMOOTHED) {
-            ++excluded_not_all_smoothed;
-            continue;
-        } else if (track_fit_outcome == traccc::track_fit_outcome::UNKNOWN) {
-            ++excluded_unknown;
-            continue;
-        }
+        // if (track_fit_outcome ==
+        //     traccc::track_fit_outcome::FAILURE_NON_POSITIVE_NDF) {
+        //     ++excluded_non_positive_ndf;
+        //     continue;
+        // } else if (track_fit_outcome ==
+        //            traccc::track_fit_outcome::FAILURE_NOT_ALL_SMOOTHED) {
+        //     ++excluded_not_all_smoothed;
+        //     continue;
+        // } else if (track_fit_outcome == traccc::track_fit_outcome::UNKNOWN) {
+        //     ++excluded_unknown;
+        //     continue;
+        // }
+
+        std::cout << "Fit outcome: " << static_cast<std::underlying_type<traccc::track_fit_outcome>::type>(track_fit_outcome) << std::endl;
 
         if (track.constituent_links().size() < 1) {
             excluded_no_state += 1;
@@ -110,7 +112,11 @@ int main(int argc, char *argv[])
             const auto& state = traccc_result.tracks_and_states.states.at(link.index);
             size_t meas_idx = state.measurement_index();
 
-            std::cout << "  Smoothed parameters: " << state.smoothed_params() << std::endl;
+            std::cout << "Track is smoothed: " << state.is_smoothed() << std::endl;
+            if (state.is_smoothed()) {
+                std::cout << "  Filtered parameters: " << state.smoothed_params() << std::endl;
+            }
+            // std::cout << "  Smoothed parameters: " << state.smoothed_params() << std::endl;
 
             const auto& measurement = traccc_result.measurements.at(meas_idx);
 

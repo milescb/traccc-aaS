@@ -199,6 +199,8 @@ static finding_algorithm::config_type create_and_setup_finding_config() {
         .min_track_candidates_per_track = 7,
         .max_track_candidates_per_track = 20,
         .max_num_skipping_per_cand = 2,
+        .max_num_consecutive_skipped = 1,
+        .max_num_tracks_per_measurement = 1,
         .min_step_length_for_next_surface = 0.5f * detray::unit<float>::mm,
         .max_step_counts_for_next_surface = 100,
         .chi2_max = 30.f,
@@ -224,21 +226,21 @@ static finding_algorithm::config_type create_and_setup_finding_config() {
     return cfg;
 }
 
-static fitting_algorithm::config_type create_and_setup_fitting_config() {
-    fitting_algorithm::config_type cfg{
-        .propagation = {
-            .navigation = {
-                .intersection = {
-                    .min_mask_tolerance = 1e-5f * unit<float>::mm,
-                    .max_mask_tolerance = 3.f * unit<float>::mm,
-                    .overstep_tolerance = -1000.f * unit<float>::um,
-                },
-                .search_window = {0u, 0u}
-            }
-        }
-    };
-    return cfg;
-}
+// static fitting_algorithm::config_type create_and_setup_fitting_config() {
+//     fitting_algorithm::config_type cfg{
+//         // .propagation = {
+//         //     .navigation = {
+//         //         .intersection = {
+//         //             .min_mask_tolerance = 1e-5f * unit<float>::mm,
+//         //             .max_mask_tolerance = 3.f * unit<float>::mm,
+//         //             .overstep_tolerance = -1000.f * unit<float>::um,
+//         //         },
+//         //         .search_window = {0u, 0u}
+//         //     }
+//         // }
+//     };
+//     return cfg;
+// }
 
 class TracccGpuStandalone
 {
@@ -364,7 +366,7 @@ public:
             m_finder_config(create_and_setup_finder_config()),
             m_filter_config(create_and_setup_filter_config()), 
             m_finding_config(create_and_setup_finding_config()), 
-            m_fitting_config(create_and_setup_fitting_config()), 
+            m_fitting_config(), 
             m_host_field(make_magnetic_field(geoDir + "ITk_bfield.cvf")),
             m_field(traccc::cuda::make_magnetic_field(m_host_field)),
             m_field_vec({0.f, 0.f, m_finder_config.bFieldInZ}),
@@ -455,6 +457,7 @@ void TracccGpuStandalone::initialize()
                 m_det_descr_storage.size()), *m_device_mr);
     m_copy.setup(m_device_det_descr)->wait();
     m_copy(m_det_descr_data, m_device_det_descr)->wait();
+    m_stream.synchronize();
 
     // fill the det description to geometry id map
     m_geomIdMap.clear();
@@ -525,19 +528,19 @@ TracccResults TracccGpuStandalone::run(
     if (show_stats) end_finding = std::chrono::high_resolution_clock::now();
 
     // Track fitting
-    if (show_stats) start_fitting = std::chrono::high_resolution_clock::now();
-    auto track_states = m_fitting(
-        m_device_detector, m_field, track_candidates);
-    if (show_stats) end_fitting = std::chrono::high_resolution_clock::now();
+    // if (show_stats) start_fitting = std::chrono::high_resolution_clock::now();
+    // auto track_states = m_fitting(
+    //     m_device_detector, m_field, track_candidates);
+    // if (show_stats) end_fitting = std::chrono::high_resolution_clock::now();
 
     // Copy results back to host
     if (show_stats) start_copy_out = std::chrono::high_resolution_clock::now();
     traccc::edm::track_container<traccc::default_algebra>::host
         track_states_host{m_host_mr};
 
-    m_copy(track_states.tracks, track_states_host.tracks,
+    m_copy(track_candidates.tracks, track_states_host.tracks,
             vecmem::copy::type::device_to_host)->wait();
-    m_copy(track_states.states, track_states_host.states,
+    m_copy(track_candidates.states, track_states_host.states,
             vecmem::copy::type::device_to_host)->wait();
     // m_copy(track_states.measurements, track_states_host.measurements,
     //         vecmem::copy::type::device_to_host)->wait();
@@ -574,9 +577,9 @@ TracccResults TracccGpuStandalone::run(
         std::cout << "Track finding:       " 
                 << std::chrono::duration<double, std::milli>(end_finding - start_finding).count() 
                 << " ms" << std::endl;
-        std::cout << "Track fitting:       " 
-                << std::chrono::duration<double, std::milli>(end_fitting - start_fitting).count() 
-                << " ms" << std::endl;
+        // std::cout << "Track fitting:       " 
+        //         << std::chrono::duration<double, std::milli>(end_fitting - start_fitting).count() 
+        //         << " ms" << std::endl;
         std::cout << "Copy to host:        " 
                 << std::chrono::duration<double, std::milli>(end_copy_out - start_copy_out).count() 
                 << " ms" << std::endl;
@@ -590,9 +593,11 @@ TracccResults TracccGpuStandalone::run(
         std::cout << "Number of spacepoints: " << m_copy.get_size(spacepoints) << std::endl;
         std::cout << "Number of seeds: " << m_copy.get_size(seeds) << std::endl;
         std::cout << "Number of track params: " << m_copy.get_size(track_params) << std::endl;
-        // std::cout << "Number of track candidates: " << m_copy.get_size(track_candidates) << std::endl;
-        // std::cout << "Number of resolved track candidates: " << m_copy.get_size(res_track_candidates) << std::endl;
-        std::cout << "Number of fitted tracks: " << track_states_host.tracks.size() << std::endl;
+        traccc::edm::track_container<traccc::default_algebra>::host track_candidates_host{m_host_mr};
+        m_copy(track_candidates.tracks, track_candidates_host.tracks,
+               vecmem::copy::type::device_to_host)->wait();
+        std::cout << "Number of track candidates: " << track_states_host.tracks.size() << std::endl;
+        // std::cout << "Number of fitted tracks: " << track_states_host.tracks.size() << std::endl;
 
     }
 
