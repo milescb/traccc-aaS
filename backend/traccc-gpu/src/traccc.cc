@@ -724,7 +724,7 @@ TRITONBACKEND_ModelInstanceExecute(
 
         trk_params_buffer.reserve(num_tracks * 2);
         measurements_buffer.reserve(num_tracks * 15 * 6); 
-        covariances_buffer.reserve(num_tracks * 15 * 36);
+        covariances_buffer.reserve(num_tracks * 15 * 25);
         geometry_ids_buffer.reserve(num_tracks * 15);
 
         // Track exclusion counters
@@ -790,7 +790,7 @@ TRITONBACKEND_ModelInstanceExecute(
                 measurements_buffer.push_back(smoothed_params.time());
 
                 auto const& cov = state.smoothed_params().covariance();
-                // Covariance matrix (6x6) flattened in row-major order
+                // Covariance matrix (5x5) flattened in row-major order
                 for (size_t row = 0; row < 5; ++row) {
                     for (size_t col = 0; col < 5; ++col) {
                         covariances_buffer.push_back(static_cast<float>(cov[row][col]));
@@ -835,7 +835,7 @@ TRITONBACKEND_ModelInstanceExecute(
             TRITONSERVER_MEMORY_CPU, 0);
 
         // --- Send 'COVARIANCES' tensor ---
-        std::vector<int64_t> covariances_shape = {static_cast<int64_t>(covariances_buffer.size() / 36), 36};
+        std::vector<int64_t> covariances_shape = {static_cast<int64_t>(covariances_buffer.size() / 25), 25};
         responder.ProcessTensor(
             "COVARIANCES", TRITONSERVER_TYPE_FP32, covariances_shape,
             reinterpret_cast<const char*>(covariances_buffer.data()),
