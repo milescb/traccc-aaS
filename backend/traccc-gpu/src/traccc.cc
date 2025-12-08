@@ -791,8 +791,8 @@ TRITONBACKEND_ModelInstanceExecute(
 
                 auto const& cov = state.smoothed_params().covariance();
                 // Covariance matrix (6x6) flattened in row-major order
-                for (size_t row = 0; row < 6; ++row) {
-                    for (size_t col = 0; col < 6; ++col) {
+                for (size_t row = 0; row < 5; ++row) {
+                    for (size_t col = 0; col < 5; ++col) {
                         covariances_buffer.push_back(static_cast<float>(cov[row][col]));
                     }
                 }

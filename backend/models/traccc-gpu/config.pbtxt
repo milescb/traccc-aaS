@@ -26,7 +26,7 @@ output [
   {
     name: "COVARIANCES"
     data_type: TYPE_FP32
-    dims: [-1, 36]
+    dims: [-1, 25]
   },
   {
     name: "GEOMETRY_IDS"

@@ -56,7 +56,7 @@ def main():
     output_names = [
         "TRK_PARAMS",      # [n_tracks, 2] - chi2, ndf
         "MEASUREMENTS",    # [total_meas_with_seps, 6] - localx, localy, phi, theta, qop, time
-        "COVARIANCES",     # [total_meas_with_seps, 36] - 6x6 covariance matrix flattened
+        "COVARIANCES",     # [total_meas_with_seps, 25] - 5x5 covariance matrix flattened
         "GEOMETRY_IDS"     # [total_meas_with_seps] - geometry IDs with 0 separators
     ]
     outputs = [grpcclient.InferRequestedOutput(name) for name in output_names]
@@ -71,7 +71,7 @@ def main():
     # Retrieve and process outputs
     trk_params = result.as_numpy("TRK_PARAMS")       # [n_tracks, 2]
     measurements = result.as_numpy("MEASUREMENTS")   # [total_meas_with_seps, 6]
-    covariances = result.as_numpy("COVARIANCES")     # [total_meas_with_seps, 36]
+    covariances = result.as_numpy("COVARIANCES")     # [total_meas_with_seps, 25]
     geometry_ids = result.as_numpy("GEOMETRY_IDS")   # [total_meas_with_seps]
     
     # Extract track parameters
@@ -120,7 +120,7 @@ def main():
 
     # Extract variances from covariances (diag elements 0 and 7)
     ak_var_x = ak.Array([[cov[0] for cov in covs] for covs in track_covariances])
-    ak_var_y = ak.Array([[cov[7] for cov in covs] for covs in track_covariances])
+    ak_var_y = ak.Array([[cov[6] for cov in covs] for covs in track_covariances])
 
     # Example: Access measurements for first tracks
     if len(ak_measurements) > 0:
