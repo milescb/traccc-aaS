@@ -16,7 +16,7 @@ output [
   {
     name: "TRK_PARAMS"
     data_type: TYPE_FP32
-    dims: [ -1, 2 ]
+    dims: [ -1, 8 ]
   },
   {
     name: "MEASUREMENTS"
