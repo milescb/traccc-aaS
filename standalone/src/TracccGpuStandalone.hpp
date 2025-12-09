@@ -221,7 +221,8 @@ static finding_algorithm::config_type create_and_setup_finding_config() {
                 .use_field_gradient = false,
                 .do_covariance_transport = true
             }
-        }
+        },
+        .initial_links_per_seed = 20
     };
     return cfg;
 }
