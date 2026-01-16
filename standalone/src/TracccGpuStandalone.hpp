@@ -227,22 +227,6 @@ static finding_algorithm::config_type create_and_setup_finding_config() {
     return cfg;
 }
 
-// static fitting_algorithm::config_type create_and_setup_fitting_config() {
-//     fitting_algorithm::config_type cfg{
-//         // .propagation = {
-//         //     .navigation = {
-//         //         .intersection = {
-//         //             .min_mask_tolerance = 1e-5f * unit<float>::mm,
-//         //             .max_mask_tolerance = 3.f * unit<float>::mm,
-//         //             .overstep_tolerance = -1000.f * unit<float>::um,
-//         //         },
-//         //         .search_window = {0u, 0u}
-//         //     }
-//         // }
-//     };
-//     return cfg;
-// }
-
 class TracccGpuStandalone
 {
 private:
@@ -268,8 +252,6 @@ private:
     /// (Asynchronous) memory copy object
     mutable vecmem::cuda::async_copy m_copy;
 
-    /// data configuration
-    // traccc::geometry m_surface_transforms;
     /// digitization configuration
     std::unique_ptr<traccc::digitization_config> m_digi_cfg;
     /// Athena to detray map
@@ -290,8 +272,6 @@ private:
     traccc::seedfilter_config m_filter_config;
 
     /// further configuration
-    // /// Configuration for ambiguity resolution
-    // traccc::host::greedy_ambiguity_resolution_algorithm::config_type m_resolution_config;
     /// Configuration for the track parameter estimation
     traccc::track_params_estimation_config m_track_params_estimation_config;
     /// Configuration for the track finding
@@ -330,12 +310,8 @@ private:
     /// Track parameter estimation algorithm
     traccc::cuda::track_params_estimation m_track_parameter_estimation;
 
-    // /// Resolution algorithm
-    // traccc::cuda::greedy_ambiguity_resolution_algorithm m_resolution;
     /// Track finding algorithm
     finding_algorithm m_finding;
-    /// Track fitting algorithm
-    fitting_algorithm m_fitting;
 
     // Helper function to read in cells
     std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>> read_all_cells(
@@ -367,7 +343,6 @@ public:
             m_finder_config(create_and_setup_finder_config()),
             m_filter_config(create_and_setup_filter_config()), 
             m_finding_config(create_and_setup_finding_config()), 
-            m_fitting_config(), 
             m_host_field(make_magnetic_field(geoDir + "ITk_bfield.cvf")),
             m_field(traccc::cuda::make_magnetic_field(m_host_field)),
             m_field_vec({0.f, 0.f, m_finder_config.bFieldInZ}),
@@ -390,9 +365,7 @@ public:
                 {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy, m_stream,
                 logger->cloneWithSuffix("TrackParEstAlg")),
             m_finding(m_finding_config, {m_cached_device_mr, &m_cached_pinned_host_mr},
-                        m_copy, m_stream, logger->cloneWithSuffix("TrackFindingAlg")),
-            m_fitting(m_fitting_config, {m_cached_device_mr, &m_cached_pinned_host_mr},
-                        m_copy, m_stream, logger->cloneWithSuffix("TrackFittingAlg"))
+                        m_copy, m_stream, logger->cloneWithSuffix("TrackFindingAlg"))
     {
         // Tell the user what device is being used.
         int device = 0;
@@ -528,12 +501,6 @@ TracccResults TracccGpuStandalone::run(
         m_device_detector, m_field, measurements, track_params);
     if (show_stats) end_finding = std::chrono::high_resolution_clock::now();
 
-    // Track fitting
-    // if (show_stats) start_fitting = std::chrono::high_resolution_clock::now();
-    // auto track_states = m_fitting(
-    //     m_device_detector, m_field, track_candidates);
-    // if (show_stats) end_fitting = std::chrono::high_resolution_clock::now();
-
     // Copy results back to host
     if (show_stats) start_copy_out = std::chrono::high_resolution_clock::now();
     traccc::edm::track_container<traccc::default_algebra>::host
@@ -543,8 +510,6 @@ TracccResults TracccGpuStandalone::run(
             vecmem::copy::type::device_to_host)->wait();
     m_copy(track_candidates.states, track_states_host.states,
             vecmem::copy::type::device_to_host)->wait();
-    // m_copy(track_states.measurements, track_states_host.measurements,
-    //         vecmem::copy::type::device_to_host)->wait();
 
     // copy measurements back to host
     traccc::edm::measurement_collection<traccc::default_algebra>::host measurements_host(m_host_mr);
@@ -597,8 +562,7 @@ TracccResults TracccGpuStandalone::run(
         traccc::edm::track_container<traccc::default_algebra>::host track_candidates_host{m_host_mr};
         m_copy(track_candidates.tracks, track_candidates_host.tracks,
                vecmem::copy::type::device_to_host)->wait();
-        std::cout << "Number of track candidates: " << track_states_host.tracks.size() << std::endl;
-        // std::cout << "Number of fitted tracks: " << track_states_host.tracks.size() << std::endl;
+        std::cout << "Number of smoothed tracks: " << track_states_host.tracks.size() << std::endl;
 
     }
 

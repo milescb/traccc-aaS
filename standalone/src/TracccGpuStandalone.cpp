@@ -68,18 +68,6 @@ int main(int argc, char *argv[])
         const auto& track = traccc_result.tracks_and_states.tracks.at(i);
 
         auto track_fit_outcome = track.fit_outcome();
-        // if (track_fit_outcome ==
-        //     traccc::track_fit_outcome::FAILURE_NON_POSITIVE_NDF) {
-        //     ++excluded_non_positive_ndf;
-        //     continue;
-        // } else if (track_fit_outcome ==
-        //            traccc::track_fit_outcome::FAILURE_NOT_ALL_SMOOTHED) {
-        //     ++excluded_not_all_smoothed;
-        //     continue;
-        // } else if (track_fit_outcome == traccc::track_fit_outcome::UNKNOWN) {
-        //     ++excluded_unknown;
-        //     continue;
-        // }
 
         std::cout << "Fit outcome: " << static_cast<std::underlying_type<traccc::track_fit_outcome>::type>(track_fit_outcome) << std::endl;
 
@@ -89,15 +77,20 @@ int main(int argc, char *argv[])
         }
 
         const auto& fitted_params = track.params();
+        traccc::scalar l0 = fitted_params.bound_local()[0];
+        traccc::scalar l1 = fitted_params.bound_local()[1];
         traccc::scalar phi = fitted_params.phi();
         traccc::scalar theta = fitted_params.theta();
         traccc::scalar qop = fitted_params.qop();
         
         std::cout << "Track " << i << ": chi2 = " << track.chi2()
                   << ", ndf = " << track.ndf()
+                  << ", l0 = " << l0
+                  << ", l1 = " << l1
                   << ", phi = " << phi
                   << ", theta = " << theta  
-                  << ", q/p = " << qop
+                  << ", q/p = " << qop 
+                  << ", time = " << fitted_params.time()
                   << std::endl;
 
         const auto& constituent_links = track.constituent_links();
@@ -115,6 +108,8 @@ int main(int argc, char *argv[])
             std::cout << "Track is smoothed: " << state.is_smoothed() << std::endl;
             if (state.is_smoothed()) {
                 std::cout << "  Filtered parameters: " << state.smoothed_params() << std::endl;
+                std::cout << "  Smoothed covariance: " << state.smoothed_params().covariance()[0][1] << std::endl;
+                std::cout << "  Time: " << state.smoothed_params().time() << std::endl;
             }
             // std::cout << "  Smoothed parameters: " << state.smoothed_params() << std::endl;
 

@@ -682,7 +682,8 @@ TRITONBACKEND_ModelInstanceExecute(
               << " ms" << std::endl;
 
     // run the reco chain
-    auto traccc_result = instance_state->traccc_gpu_standalone_->run(cells, false);
+    bool print_stats = true;
+    auto traccc_result = instance_state->traccc_gpu_standalone_->run(cells, print_stats);
 
     auto output_proc_start = std::chrono::high_resolution_clock::now();
 
@@ -748,7 +749,7 @@ TRITONBACKEND_ModelInstanceExecute(
                 excluded_non_positive_ndf += 1;
                 continue;
             }
-            if (track.constituent_links().size() < 1) {
+            if (track.constituent_links().size() < 3) {
                 excluded_no_state += 1;
                 continue;
             }
@@ -772,6 +773,19 @@ TRITONBACKEND_ModelInstanceExecute(
             trk_params_buffer.push_back(static_cast<float>(fitted_params.theta()));
             trk_params_buffer.push_back(static_cast<float>(fitted_params.qop()));
             trk_params_buffer.push_back(static_cast<float>(fitted_params.time()));
+
+            if (included_tracks < 3 && print_stats)
+            {
+                std::cout << "Track " << included_tracks << " parameters: ";
+                std::cout << static_cast<float>(track.chi2()) << " ";
+                std::cout << static_cast<float>(track.ndf()) << " ";
+                std::cout << static_cast<float>(fitted_params.bound_local()[0]) << " ";
+                std::cout << static_cast<float>(fitted_params.bound_local()[1]) << " ";
+                std::cout << static_cast<float>(fitted_params.phi()) << " ";
+                std::cout << static_cast<float>(fitted_params.theta()) << " ";
+                std::cout << static_cast<float>(fitted_params.qop()) << " ";
+                std::cout << static_cast<float>(fitted_params.time()) << std::endl;
+            }
 
             // --- Process Measurements for this track ---
             const auto& constituent_links = track.constituent_links();
@@ -801,7 +815,18 @@ TRITONBACKEND_ModelInstanceExecute(
                 // Covariance matrix (5x5) flattened in row-major order
                 for (size_t row = 0; row < 5; ++row) {
                     for (size_t col = 0; col < 5; ++col) {
-                        covariances_buffer.push_back(static_cast<float>(cov[row][col]));
+                        // check for nan or inf
+                        float value = static_cast<float>(cov[row][col]);
+                        if (std::isnan(value) || std::isinf(value)) {
+                            LOG_MESSAGE(TRITONSERVER_LOG_ERROR, 
+                                        ("Invalid covariance value (nan or inf) for track " + std::to_string(included_tracks) + 
+                                         ", measurement " + std::to_string(j) + 
+                                         ", row " + std::to_string(row) + 
+                                         ", col " + std::to_string(col)).c_str());
+                            covariances_buffer.push_back(0.0f); // fallback to 0.0f
+                        } else {
+                            covariances_buffer.push_back(value);
+                        }
                     }
                 }
 
@@ -814,6 +839,12 @@ TRITONBACKEND_ModelInstanceExecute(
                                 ("Missing reverse mapping for Detray ID: " + std::to_string(detray_id)).c_str());
                     geometry_ids_buffer.push_back(detray_id); // Fallback
                 }
+
+                // if (included_tracks < 3 && print_stats) 
+                // {
+                //     std::cout << "  Measurement " << j << " local position: (" << measurement.local_position()[0] << ", " << measurement.local_position()[1] << ")" << std::endl;
+                //     std::cout << "      Athena id: " << instance_state->traccc_gpu_standalone_->getDetrayToAthenaMap().at(detray_id) << std::endl;
+                // }
             }
 
             ++included_tracks;

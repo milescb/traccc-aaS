@@ -11,7 +11,7 @@ plt.style.use(mplhep.style.ROOT)
 
 import tritonclient.grpc as grpcclient
 
-def plot_histogram(data, name, xlabel, bins=50):
+def plot_histogram(data, name, xlabel, bins=50, xlims=None, logy=False):
     """Plots a histogram for the given data on a new canvas."""
     if data is None or data.size == 0:
         print(f"No data to plot for {name}")
@@ -21,7 +21,10 @@ def plot_histogram(data, name, xlabel, bins=50):
     plt.xlabel(xlabel)
     plt.ylabel("Events")
     plt.tight_layout()
-    plt.yscale('log')
+    if xlims is not None:
+        plt.xlim(xlims)
+    if logy:
+        plt.yscale('log')
     plt.savefig(f"plots/{name.replace(" ", "_")}.png")
 
 def main():
@@ -69,14 +72,44 @@ def main():
     )
 
     # Retrieve and process outputs
-    trk_params = result.as_numpy("TRK_PARAMS")       # [n_tracks, 2]
+    trk_params = result.as_numpy("TRK_PARAMS")       # [n_tracks, 8]
     measurements = result.as_numpy("MEASUREMENTS")   # [total_meas_with_seps, 6]
     covariances = result.as_numpy("COVARIANCES")     # [total_meas_with_seps, 25]
     geometry_ids = result.as_numpy("GEOMETRY_IDS")   # [total_meas_with_seps]
     
-    # Extract track parameters
+    # Extract global track parameters
     chi2 = trk_params[:, 0]
     ndf = trk_params[:, 1]
+    l0 = trk_params[:, 2]
+    l1 = trk_params[:, 3]
+    phi = trk_params[:, 4]
+    theta = trk_params[:, 5]
+    qop = trk_params[:, 6]
+    
+    valid_theta_mask = (np.abs(theta) <= 2 * 3.14) & (np.abs(phi) <= 2 * 3.14) & (abs(l0) < 1000) & (abs(l1) < 1000) & (phi != 0) & (theta != 0) & (qop != 0) & (l0 != 0) & (l1 != 0)
+    print(f"Total tracks before filter: {len(theta)}")
+    print(f"Tracks passing filter: {np.sum(valid_theta_mask)}")
+    print(f"Tracks rejected: {len(theta) - np.sum(valid_theta_mask)}")
+    print(f"Filter efficiency: {100 * np.sum(valid_theta_mask) / len(theta):.2f}%")
+    chi2 = chi2[valid_theta_mask]
+    ndf = ndf[valid_theta_mask]
+    l0 = l0[valid_theta_mask]
+    l1 = l1[valid_theta_mask]
+    phi = phi[valid_theta_mask]
+    theta = theta[valid_theta_mask]
+    qop = qop[valid_theta_mask]
+    
+    print(l0)
+    print(theta)
+    print(qop)
+    
+    plot_histogram(chi2, "Chi2", "Chi2", logy=True)
+    plot_histogram(ndf, "NDF", "NDF")
+    plot_histogram(l0, "L0", "L0")
+    plot_histogram(l1, "L1", "L1")
+    plot_histogram(phi, "Phi", "Phi (radians)")
+    plot_histogram(theta, "Theta", "Theta (radians)")
+    plot_histogram(qop, "Qop", "Q/P (1/GeV)")
     
     # Reconstruct tracks using geometry_id separators (gid == 0)
     track_measurements = []
@@ -133,14 +166,10 @@ def main():
         print(f"  Local positions: {ak_measurements[1]}")
         print(f"  Local variances (from diagonal): x={ak_var_x[1]}, y={ak_var_y[1]}")
         print(f"  Geometry IDs: {ak_geometry_ids[1]}")
-
-    # Plot histograms
-    plot_histogram(chi2, "Chi2", "Chi2")
-    plot_histogram(ndf, "NDF", "NDF")
     
-    # Plot variances extracted from covariance matrices
-    plot_histogram(ak.flatten(ak_var_x).to_numpy(), "Var_X", "Local X Variance")
-    plot_histogram(ak.flatten(ak_var_y).to_numpy(), "Var_Y", "Local Y Variance")
+    # # Plot variances extracted from covariance matrices
+    # plot_histogram(ak.flatten(ak_var_x).to_numpy(), "Var_X", "Local X Variance")
+    # plot_histogram(ak.flatten(ak_var_y).to_numpy(), "Var_Y", "Local Y Variance")
     
     # Additional awkward array operations
     print(f"\nAwkward array operations:")

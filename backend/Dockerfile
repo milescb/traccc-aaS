@@ -4,14 +4,14 @@ FROM docker.io/milescb/triton-server:25.02-py3_gcc13.3
 WORKDIR /traccc
 RUN mkdir build install itk-geometry
 RUN git clone https://github.com/acts-project/traccc.git 
-RUN cd traccc && git checkout e49d353
+RUN cd traccc && git checkout e49d353a
 WORKDIR /traccc/build
 RUN cmake -DCMAKE_INSTALL_PREFIX=../install ../traccc \
         -DCMAKE_BUILD_TYPE=Release \
         -DTRACCC_BUILD_CUDA=ON \
-        -DTRACCC_BUILD_EXAMPLES=OFF \
+        -DTRACCC_BUILD_EXAMPLES=ON \
         -DTRACCC_USE_ROOT=FALSE \
-        -DTRACCC_SUPPORTED_DETECTORS=itk_detector
+        -DTRACCC_SUPPORTED_DETECTORS="itk_detector;odd_detector"
 
 RUN cmake --build . --target install -- -j20
 
@@ -26,6 +26,10 @@ RUN git clone https://github.com/milescb/traccc-aaS.git && cd traccc-aaS/
 # Replace hard-coded paths in TracccGpuStandalone.hpp with local paths in docker
 RUN sed -i 's|/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-01/itk-geo/|/traccc/itk-geometry/|g' \
                 /traccc-aaS/traccc-aaS/standalone/src/TracccGpuStandalone.hpp
+
+# # for debug mode, enable more logging 
+RUN sed -i 's|traccc_gpu_standalone_->run(cells, false)|traccc_gpu_standalone_->run(cells, true)|g' \
+                /traccc-aaS/traccc-aaS/backend/traccc-gpu/src/traccc.cc
 
 RUN cd /traccc-aaS/traccc-aaS/backend/traccc-gpu && mkdir build install && cd build && \
     cmake -B . -S ../ -DCMAKE_INSTALL_PREFIX=../install -DCMAKE_BUILD_TYPE=Release && \
