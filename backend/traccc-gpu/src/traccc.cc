@@ -817,9 +817,9 @@ TRITONBACKEND_ModelInstanceExecute(
                     for (size_t col = 0; col < 5; ++col) {
                         // check for nan or inf
                         float value = static_cast<float>(cov[row][col]);
-                        if (std::isnan(value) || std::isinf(value)) {
+                        if (std::isnan(value) || std::isinf(value) || (value > 1e5)) {
                             LOG_MESSAGE(TRITONSERVER_LOG_ERROR, 
-                                        ("Invalid covariance value (nan or inf) for track " + std::to_string(included_tracks) + 
+                                        ("Invalid covariance value (nan, inf, or > 1e5) for track " + std::to_string(included_tracks) + 
                                          ", measurement " + std::to_string(j) + 
                                          ", row " + std::to_string(row) + 
                                          ", col " + std::to_string(col)).c_str());

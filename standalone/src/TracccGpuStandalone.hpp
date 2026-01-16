@@ -513,7 +513,7 @@ TracccResults TracccGpuStandalone::run(
 
     // copy measurements back to host
     traccc::edm::measurement_collection<traccc::default_algebra>::host measurements_host(m_host_mr);
-    m_copy(measurements, measurements_host, vecmem::copy::type::device_to_host)->wait();
+    m_copy(track_candidates.measurements, measurements_host, vecmem::copy::type::device_to_host)->wait();
     if (show_stats) end_copy_out = std::chrono::high_resolution_clock::now();
 
     if (show_stats) 
@@ -626,10 +626,11 @@ std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>>
     }
 
     // Sorting happens on the client side!
-    // for (auto& [_, cells] : result) 
-    // {
-    //     std::sort(cells.begin(), cells.end(), ::cell_order());
-    // }
+    // put here again for redundancy
+    for (auto& [_, cells] : result) 
+    {
+        std::sort(cells.begin(), cells.end(), ::cell_order());
+    }
 
     return result;
 }
