@@ -21,15 +21,15 @@ ENV LD_LIBRARY_PATH=/traccc/install/lib:$LD_LIBRARY_PATH
 
 # install custom backend
 WORKDIR /traccc-aaS
-RUN git clone https://github.com/milescb/traccc-aaS.git && cd traccc-aaS/
+RUN git clone https://github.com/milescb/traccc-aaS.git && cd traccc-aaS/ && git checkout 0cce701da678515aa501bbbc73d3abaf427fe54e
 
 # Replace hard-coded paths in TracccGpuStandalone.hpp with local paths in docker
 RUN sed -i 's|/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-01/itk-geo/|/traccc/itk-geometry/|g' \
                 /traccc-aaS/traccc-aaS/standalone/src/TracccGpuStandalone.hpp
 
 # # for debug mode, enable more logging 
-RUN sed -i 's|traccc_gpu_standalone_->run(cells, false)|traccc_gpu_standalone_->run(cells, true)|g' \
-                /traccc-aaS/traccc-aaS/backend/traccc-gpu/src/traccc.cc
+# RUN sed -i 's|bool print_stats = true;|bool print_stats = false;|g' \
+#                 /traccc-aaS/traccc-aaS/backend/traccc-gpu/src/traccc.cc
 
 RUN cd /traccc-aaS/traccc-aaS/backend/traccc-gpu && mkdir build install && cd build && \
     cmake -B . -S ../ -DCMAKE_INSTALL_PREFIX=../install -DCMAKE_BUILD_TYPE=Release && \

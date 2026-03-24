@@ -1,3 +1,5 @@
+import tritonclient.grpc as grpcclient
+
 import argparse
 import sys
 
@@ -8,8 +10,6 @@ import awkward as ak
 import matplotlib.pyplot as plt
 import mplhep
 plt.style.use(mplhep.style.ROOT)
-
-import tritonclient.grpc as grpcclient
 
 def plot_histogram(data, name, xlabel, bins=50, xlims=None, logy=False):
     """Plots a histogram for the given data on a new canvas."""
@@ -28,11 +28,7 @@ def plot_histogram(data, name, xlabel, bins=50, xlims=None, logy=False):
     plt.savefig(f"plots/{name.replace(" ", "_")}.png")
 
 def main():
-    # For the gRPC client, need to specify large enough concurrency to
-    # issue all the inference requests to the server in parallel. For
-    # this example we want to be able to send 2 requests concurrently.
     try:
-        concurrent_request_count = 1
         triton_client = grpcclient.InferenceServerClient(
             url=FLAGS.url, ssl=FLAGS.ssl
         )
@@ -86,7 +82,9 @@ def main():
     theta = trk_params[:, 5]
     qop = trk_params[:, 6]
     
-    valid_theta_mask = (np.abs(theta) <= 2 * 3.14) & (np.abs(phi) <= 2 * 3.14) & (abs(l0) < 1000) & (abs(l1) < 1000) & (phi != 0) & (theta != 0) & (qop != 0) & (l0 != 0) & (l1 != 0)
+    valid_theta_mask = ((np.abs(theta) <= 2 * 3.14) & (np.abs(phi) <= 2 * 3.14) & (abs(l0) < 1000) 
+                        & (abs(l1) < 1000) & (phi != 0) & (theta != 0) & (qop != 0) 
+                        & (l0 != 0) & (l1 != 0))
     print(f"Total tracks before filter: {len(theta)}")
     print(f"Tracks passing filter: {np.sum(valid_theta_mask)}")
     print(f"Tracks rejected: {len(theta) - np.sum(valid_theta_mask)}")
@@ -99,10 +97,6 @@ def main():
     theta = theta[valid_theta_mask]
     qop = qop[valid_theta_mask]
     
-    print(l0)
-    print(theta)
-    print(qop)
-    
     plot_histogram(chi2, "Chi2", "Chi2", logy=True)
     plot_histogram(ndf, "NDF", "NDF")
     plot_histogram(l0, "L0", "L0")
@@ -111,7 +105,7 @@ def main():
     plot_histogram(theta, "Theta", "Theta (radians)")
     plot_histogram(qop, "Qop", "Q/P (1/GeV)")
     
-    # Reconstruct tracks using geometry_id separators (gid == 0)
+    # Reconstruct tracks using geometry_id separators (gid == 0) as in traccc.cc
     track_measurements = []
     track_covariances = []
     track_geometry_ids = []
@@ -167,12 +161,8 @@ def main():
         print(f"  Local variances (from diagonal): x={ak_var_x[1]}, y={ak_var_y[1]}")
         print(f"  Geometry IDs: {ak_geometry_ids[1]}")
     
-    # # Plot variances extracted from covariance matrices
-    # plot_histogram(ak.flatten(ak_var_x).to_numpy(), "Var_X", "Local X Variance")
-    # plot_histogram(ak.flatten(ak_var_y).to_numpy(), "Var_Y", "Local Y Variance")
-    
     # Additional awkward array operations
-    print(f"\nAwkward array operations:")
+    print("\nAwkward array operations:")
     print(f"Average measurements per track: {ak.mean(ak.num(ak_measurements, axis=1)):.2f}")
     print(f"Max measurements in any track: {ak.max(ak.num(ak_measurements, axis=1))}")
     print(f"Min measurements in any track: {ak.min(ak.num(ak_measurements, axis=1))}")

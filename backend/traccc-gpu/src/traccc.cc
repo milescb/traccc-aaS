@@ -653,11 +653,14 @@ TRITONBACKEND_ModelInstanceExecute(
     size_t num_props = input_cell_properties_buffer_byte_size / (sizeof(float) * 2);
 
     // convert to expected types
-    const std::int64_t *cell_positions_ptr = reinterpret_cast<const std::int64_t *>(input_cell_positions_buffer);
-    const float *cell_properties_ptr = reinterpret_cast<const float *>(input_cell_properties_buffer);
+    const std::int64_t *cell_positions_ptr = 
+        reinterpret_cast<const std::int64_t *>(input_cell_positions_buffer);
+    const float *cell_properties_ptr = 
+        reinterpret_cast<const float *>(input_cell_properties_buffer);
 
     if (num_cells != num_props) {
-        LOG_MESSAGE(TRITONSERVER_LOG_ERROR, "Mismatch between number of cell positions and cell properties.");
+        LOG_MESSAGE(TRITONSERVER_LOG_ERROR, 
+            "Mismatch between number of cell positions and cell properties.");
     }
 
     std::cout << "Number of cells received: " << num_cells  << std::endl;
@@ -682,7 +685,7 @@ TRITONBACKEND_ModelInstanceExecute(
               << " ms" << std::endl;
 
     // run the reco chain
-    bool print_stats = true;
+    bool print_stats = false;
     auto traccc_result = instance_state->traccc_gpu_standalone_->run(cells, print_stats);
 
     auto output_proc_start = std::chrono::high_resolution_clock::now();
@@ -755,10 +758,9 @@ TRITONBACKEND_ModelInstanceExecute(
             }
 
             // Add separator before this track's measurements, if it's not the first included track
+            // This is done only for geometry ids, and splits on the track are then done on this
+            // variable from the client side. 
             if (included_tracks > 0) {
-                // // TODO: may not need the first two of these
-                // measurements_buffer.insert(measurements_buffer.end(), 6, -1.0f);
-                // covariances_buffer.insert(covariances_buffer.end(), 36, 0.0f);
                 geometry_ids_buffer.push_back(0);
             }
 
@@ -813,16 +815,12 @@ TRITONBACKEND_ModelInstanceExecute(
 
                 auto const& cov = state.smoothed_params().covariance();
                 // Covariance matrix (5x5) flattened in row-major order
+                // TODO: only need to send upper triangle since symmetric
                 for (size_t row = 0; row < 5; ++row) {
                     for (size_t col = 0; col < 5; ++col) {
                         // check for nan or inf
                         float value = static_cast<float>(cov[row][col]);
-                        if (std::isnan(value) || std::isinf(value) || (value > 1e5)) {
-                            LOG_MESSAGE(TRITONSERVER_LOG_ERROR, 
-                                        ("Invalid covariance value (nan, inf, or > 1e5) for track " + std::to_string(included_tracks) + 
-                                         ", measurement " + std::to_string(j) + 
-                                         ", row " + std::to_string(row) + 
-                                         ", col " + std::to_string(col)).c_str());
+                        if (std::isnan(value) || std::isinf(value) || (value > 1e8)) {
                             covariances_buffer.push_back(0.0f); // fallback to 0.0f
                         } else {
                             covariances_buffer.push_back(value);
@@ -836,15 +834,10 @@ TRITONBACKEND_ModelInstanceExecute(
                         instance_state->traccc_gpu_standalone_->getDetrayToAthenaMap().at(detray_id));
                 } catch (const std::out_of_range& e) {
                     LOG_MESSAGE(TRITONSERVER_LOG_ERROR, 
-                                ("Missing reverse mapping for Detray ID: " + std::to_string(detray_id)).c_str());
+                                ("Missing reverse mapping for Detray ID: " 
+                                    + std::to_string(detray_id)).c_str());
                     geometry_ids_buffer.push_back(detray_id); // Fallback
                 }
-
-                // if (included_tracks < 3 && print_stats) 
-                // {
-                //     std::cout << "  Measurement " << j << " local position: (" << measurement.local_position()[0] << ", " << measurement.local_position()[1] << ")" << std::endl;
-                //     std::cout << "      Athena id: " << instance_state->traccc_gpu_standalone_->getDetrayToAthenaMap().at(detray_id) << std::endl;
-                // }
             }
 
             ++included_tracks;
@@ -867,14 +860,16 @@ TRITONBACKEND_ModelInstanceExecute(
             TRITONSERVER_MEMORY_CPU, 0);
 
         // --- Send 'MEASUREMENTS' tensor ---
-        std::vector<int64_t> measurements_shape = {static_cast<int64_t>(measurements_buffer.size() / 6), 6};
+        std::vector<int64_t> measurements_shape 
+            = {static_cast<int64_t>(measurements_buffer.size() / 6), 6};
         responder.ProcessTensor(
             "MEASUREMENTS", TRITONSERVER_TYPE_FP32, measurements_shape,
             reinterpret_cast<const char*>(measurements_buffer.data()),
             TRITONSERVER_MEMORY_CPU, 0);
 
         // --- Send 'COVARIANCES' tensor ---
-        std::vector<int64_t> covariances_shape = {static_cast<int64_t>(covariances_buffer.size() / 25), 25};
+        std::vector<int64_t> covariances_shape 
+            = {static_cast<int64_t>(covariances_buffer.size() / 25), 25};
         responder.ProcessTensor(
             "COVARIANCES", TRITONSERVER_TYPE_FP32, covariances_shape,
             reinterpret_cast<const char*>(covariances_buffer.data()),
@@ -890,7 +885,8 @@ TRITONBACKEND_ModelInstanceExecute(
 
     auto output_proc_end = std::chrono::high_resolution_clock::now();
     std::cout << "[TIMING] Output processing: "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(output_proc_end - output_proc_start).count()
+              << std::chrono::duration_cast<std::chrono::milliseconds>(
+                    output_proc_end - output_proc_start).count()
               << " ms" << std::endl;
 
     // Finalize the responder. If 'true' is returned, the output
