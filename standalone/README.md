@@ -4,7 +4,8 @@ Run within the standalone directory, add the appropriate variables to `PATH` as 
 
 ```
 mkdir build && cd build
-cmake ../
+cmake ../ -Dalpaka_ACC_GPU_HIP_ENABLE=ON -DCMAKE_PREFIX_PATH=/opt/rocm \
+    -DCMAKE_HIP_ARCHITECTURES=gfx1100 -DCMAKE_BUILD_TYPE=Release
 cmake --build .
 ```
 

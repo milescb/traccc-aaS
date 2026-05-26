@@ -6,37 +6,31 @@
 #include <chrono>
 #include <unordered_map>
 
-// CUDA include(s).
-#include <cuda_runtime.h>
-
 // local includes
 #include "TracccEdmConversion.hpp"
 
 // Project include(s).
 #include "traccc/clusterization/clustering_config.hpp"
 #include "traccc/ambiguity_resolution/greedy_ambiguity_resolution_algorithm.hpp"
-#include "traccc/cuda/clusterization/clusterization_algorithm.hpp"
-#include "traccc/cuda/ambiguity_resolution/greedy_ambiguity_resolution_algorithm.hpp"
-#include "traccc/cuda/clusterization/measurement_sorting_algorithm.hpp"
-#include "traccc/cuda/finding/combinatorial_kalman_filter_algorithm.hpp"
-#include "traccc/cuda/fitting/kalman_fitting_algorithm.hpp"
-#include "traccc/cuda/seeding/seeding_algorithm.hpp"
-#include "traccc/cuda/seeding/spacepoint_formation_algorithm.hpp"
-#include "traccc/cuda/seeding/track_params_estimation.hpp"
-#include "traccc/cuda/gbts_seeding/gbts_seeding_algorithm.hpp"
-#include "traccc/cuda/utils/make_magnetic_field.hpp"
-#include "traccc/cuda/utils/stream.hpp"
+#include "traccc/alpaka/clusterization/clusterization_algorithm.hpp"
+#include "traccc/alpaka/clusterization/measurement_sorting_algorithm.hpp"
+#include "traccc/alpaka/finding/combinatorial_kalman_filter_algorithm.hpp"
+#include "traccc/alpaka/fitting/kalman_fitting_algorithm.hpp"
+#include "traccc/alpaka/seeding/seeding_algorithm.hpp"
+#include "traccc/alpaka/seeding/spacepoint_formation_algorithm.hpp"
+#include "traccc/alpaka/seeding/track_params_estimation.hpp"
+#include "traccc/alpaka/utils/get_device_info.hpp"
+#include "traccc/alpaka/utils/queue.hpp"
+#include "traccc/alpaka/utils/vecmem_objects.hpp"
 #include "traccc/edm/silicon_cell_collection.hpp"
 #include "traccc/edm/measurement_collection.hpp"
 #include "traccc/edm/spacepoint_collection.hpp"
-// #include "traccc/io/csv/measurement.hpp"
 #include "traccc/geometry/detector.hpp"
 #include "traccc/geometry/detector_buffer.hpp"
 #include "traccc/geometry/host_detector.hpp"
 #include "traccc/geometry/silicon_detector_description.hpp"
-#include "traccc/finding/combinatorial_kalman_filter_algorithm.hpp"
-#include "traccc/fitting/kalman_fitting_algorithm.hpp"
 #include "traccc/utils/algorithm.hpp"
+#include "traccc/utils/memory_resource.hpp"
 #include "traccc/device/container_d2h_copy_alg.hpp"
 
 // magnetic field include(s).
@@ -56,11 +50,7 @@
 #include <vecmem/containers/vector.hpp>
 #include <vecmem/containers/jagged_vector.hpp>
 #include <vecmem/containers/jagged_device_vector.hpp>
-#include <vecmem/memory/binary_page_memory_resource.hpp>
-#include <vecmem/memory/cuda/device_memory_resource.hpp>
-#include <vecmem/memory/cuda/host_memory_resource.hpp>
 #include <vecmem/memory/host_memory_resource.hpp>
-#include <vecmem/utils/cuda/async_copy.hpp>
 
 // io
 #include "traccc/io/read_cells.hpp"
@@ -72,28 +62,6 @@
 
 // algorithm options
 #include "traccc/options/detector.hpp"
-
-// function to set the CUDA device and get the stream
-static traccc::cuda::stream setCudaDeviceAndGetStream(int deviceID)
-{
-    cudaError_t err = cudaSetDevice(deviceID);
-    if (err != cudaSuccess)
-    {
-        throw std::runtime_error("Failed to set CUDA device: \
-                " + std::string(cudaGetErrorString(err)));
-    }
-    return traccc::cuda::stream(deviceID);
-}
-
-/// Helper macro for checking the return value of CUDA function calls
-#define CUDA_ERROR_CHECK(EXP)                                                  \
-    do {                                                                       \
-        const cudaError_t errorCode = EXP;                                     \
-        if (errorCode != cudaSuccess) {                                        \
-            throw std::runtime_error(std::string("Failed to run " #EXP " (") + \
-                                     cudaGetErrorString(errorCode) + ")");     \
-        }                                                                      \
-    } while (false)
 
 std::chrono::high_resolution_clock::time_point start_total, end_total;
 std::chrono::high_resolution_clock::time_point start_read, end_read;
@@ -139,15 +107,13 @@ using stepper_type =
     detray::rk_stepper<bfield_type::view_t,
                         traccc::default_detector::host::algebra_type,
                         detray::constrained_step<scalar_type>>;
-// using navigator_type = detray::navigator<const device_detector_type>;
-// using device_navigator_type = detray::navigator<const device_detector_type>;
 
-using spacepoint_formation_algorithm = traccc::cuda::spacepoint_formation_algorithm;
-using clustering_algorithm = traccc::cuda::clusterization_algorithm;
+using spacepoint_formation_algorithm =
+    traccc::alpaka::spacepoint_formation_algorithm;
+using clustering_algorithm = traccc::alpaka::clusterization_algorithm;
 using finding_algorithm =
-    traccc::cuda::combinatorial_kalman_filter_algorithm;
-using host_fitting_algorithm = traccc::host::kalman_fitting_algorithm;
-using fitting_algorithm = traccc::cuda::kalman_fitting_algorithm;
+    traccc::alpaka::combinatorial_kalman_filter_algorithm;
+using fitting_algorithm = traccc::alpaka::kalman_fitting_algorithm;
 
 template <typename scalar_t>
 using unit = detray::unit<scalar_t>;
@@ -189,6 +155,11 @@ static traccc::seedfilter_config create_and_setup_filter_config() {
     cfg.seed_min_weight = 200.f;
     cfg.spB_min_radius = 43.f * unit<float>::mm;
     cfg.compatSeedLimit = 1;
+    return cfg;
+}
+
+static fitting_algorithm::config_type create_and_setup_fitting_config() {
+    fitting_algorithm::config_type cfg;
     return cfg;
 }
 
@@ -235,22 +206,17 @@ private:
     /// Geometry directory path
     std::string m_geoDir;
 
-    /// Logger 
+    /// Logger
     std::unique_ptr<const traccc::Logger> logger;
-    /// Host memory resource
-    vecmem::memory_resource& m_host_mr;
-    /// Pinned host memory resource
-    vecmem::cuda::host_memory_resource m_pinned_host_mr;
-    /// Cached pinned host memory resource
-    mutable vecmem::binary_page_memory_resource m_cached_pinned_host_mr;
-    /// CUDA stream to use
-    traccc::cuda::stream m_stream;
-    /// Device memory resource
-    vecmem::cuda::device_memory_resource* m_device_mr;
-    /// Device caching memory resource
-    mutable vecmem::binary_page_memory_resource m_cached_device_mr;
+
+    /// Alpaka queue (must be declared before vecmem_objects)
+    traccc::alpaka::queue m_queue;
+    /// VecMem objects (host/device memory resources and copy helpers)
+    traccc::alpaka::vecmem_objects m_vo;
     /// (Asynchronous) memory copy object
-    mutable vecmem::cuda::async_copy m_copy;
+    vecmem::copy& m_copy;
+    /// Unified memory resource struct
+    traccc::memory_resource m_mr;
 
     /// digitization configuration
     std::unique_ptr<traccc::digitization_config> m_digi_cfg;
@@ -270,14 +236,14 @@ private:
     traccc::seedfinder_config m_finder_config;
     /// Configuration for the seed filtering
     traccc::seedfilter_config m_filter_config;
+    /// Configuration for the spacepoint grid
+    traccc::spacepoint_grid_config m_grid_config;
 
     /// further configuration
     /// Configuration for the track parameter estimation
     traccc::track_params_estimation_config m_track_params_estimation_config;
     /// Configuration for the track finding
     finding_algorithm::config_type m_finding_config;
-    /// Configuration for the track fitting
-    fitting_algorithm::config_type m_fitting_config;
 
     /// host field object
     traccc::magnetic_field m_host_field;
@@ -292,6 +258,7 @@ private:
         m_det_descr;
     /// Detector description buffer
     traccc::silicon_detector_description::buffer m_device_det_descr;
+
     /// Host detector
     traccc::host_detector m_detector;
     traccc::detector_buffer m_device_detector;
@@ -300,81 +267,72 @@ private:
     /// Clusterization algorithm
     clustering_algorithm m_clusterization;
     /// Measurement sorting algorithm
-    traccc::cuda::measurement_sorting_algorithm m_measurement_sorting;
+    traccc::alpaka::measurement_sorting_algorithm m_measurement_sorting;
     /// Spacepoint formation algorithm
     spacepoint_formation_algorithm m_spacepoint_formation;
     /// Seeding algorithm
-    traccc::cuda::seeding_algorithm m_seeding;
-    // /// GBTS seeding algorithm
-    // traccc::cuda::gbts_seeding_algorithm m_gbts_seeding;
+    traccc::alpaka::seeding_algorithm m_seeding;
     /// Track parameter estimation algorithm
-    traccc::cuda::track_params_estimation m_track_parameter_estimation;
+    traccc::alpaka::track_params_estimation m_track_parameter_estimation;
 
     /// Track finding algorithm
     finding_algorithm m_finding;
+    /// Track fitting algorithm
+    fitting_algorithm m_fitting;
+    /// Configuration for the track fitting
+    fitting_algorithm::config_type m_fitting_config;
 
     // Helper function to read in cells
     std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>> read_all_cells(
         const std::vector<traccc::io::csv::cell> &cells);
 
-    void read_cells(traccc::edm::silicon_cell_collection::host &out, 
-                const std::vector<traccc::io::csv::cell> &cells, 
-                const traccc::silicon_detector_description::host* dd,
+    void read_cells(traccc::edm::silicon_cell_collection::host &out,
+                const std::vector<traccc::io::csv::cell> &cells,
                 bool deduplicate,
                 bool use_acts_geometry_id);
 
 public:
-    TracccGpuStandalone( 
-        vecmem::host_memory_resource* host_mr,
-        vecmem::cuda::device_memory_resource* device_mr,
+    TracccGpuStandalone(
         int deviceID = 0,
-        const std::string& geoDir = "/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-01/itk-geo/") :
-            m_device_id(deviceID), 
+        const std::string& geoDir = "/eos/project/a/atlas-eftracking/GPU/ITk_data/FinalReport/") :
+            m_device_id(deviceID),
             m_geoDir(geoDir),
             logger(traccc::getDefaultLogger("TracccGpuStandalone", traccc::Logging::Level::INFO)),
-            m_host_mr(*host_mr),
-            m_pinned_host_mr(),
-            m_cached_pinned_host_mr(m_pinned_host_mr),
-            m_stream(setCudaDeviceAndGetStream(deviceID)),
-            m_device_mr(device_mr),
-            m_cached_device_mr(*m_device_mr),
-            m_copy(m_stream.cudaStream()),
+            m_queue(static_cast<std::size_t>(deviceID)),
+            m_vo(m_queue),
+            m_copy(m_vo.async_copy()),
+            m_mr{m_vo.device_mr(), &m_vo.host_mr()},
             m_clustering_config{256, 16, 8, 256},
             m_finder_config(create_and_setup_finder_config()),
-            m_filter_config(create_and_setup_filter_config()), 
-            m_finding_config(create_and_setup_finding_config()), 
-            m_host_field(make_magnetic_field(geoDir + "ITk_bfield.cvf")),
-            m_field(traccc::cuda::make_magnetic_field(m_host_field)),
+            m_filter_config(create_and_setup_filter_config()),
+            m_grid_config(m_finder_config),
+            m_finding_config(create_and_setup_finding_config()),
+            m_field(make_magnetic_field(geoDir + "ITk_bfield.cvf")),
             m_field_vec({0.f, 0.f, m_finder_config.bFieldInZ}),
-            m_det_descr_storage(m_host_mr),
+            m_det_descr_storage(m_vo.host_mr()),
             m_det_descr(m_det_descr_storage),
-            m_device_det_descr(0, *m_device_mr),
-            m_clusterization({m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy,
-                            m_stream, m_clustering_config),
-            m_measurement_sorting({m_cached_device_mr, &m_cached_pinned_host_mr},
-                                    m_copy, m_stream,
-                                    logger->cloneWithSuffix("MeasSortingAlg")),
-            m_spacepoint_formation({m_cached_device_mr, &m_cached_pinned_host_mr},
-                                    m_copy, m_stream,
+            m_device_det_descr(0, m_vo.device_mr()),
+            m_clusterization(m_mr, m_vo.async_copy(), m_queue,
+                             m_clustering_config,
+                             logger->cloneWithSuffix("ClusteringAlg")),
+            m_measurement_sorting(m_mr, m_vo.async_copy(), m_queue,
+                                   logger->cloneWithSuffix("MeasSortingAlg")),
+            m_spacepoint_formation(m_mr, m_vo.async_copy(), m_queue,
                                     logger->cloneWithSuffix("SpFormationAlg")),
-            m_seeding(m_finder_config, m_finder_config, m_filter_config,
-                        {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy,
-                        m_stream, logger->cloneWithSuffix("SeedingAlg")),
+            m_seeding(m_finder_config, m_grid_config, m_filter_config,
+                      m_mr, m_vo.async_copy(), m_queue,
+                      logger->cloneWithSuffix("SeedingAlg")),
             m_track_parameter_estimation(
                 m_track_params_estimation_config,
-                {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy, m_stream,
+                m_mr, m_vo.async_copy(), m_queue,
                 logger->cloneWithSuffix("TrackParEstAlg")),
-            m_finding(m_finding_config, {m_cached_device_mr, &m_cached_pinned_host_mr},
-                        m_copy, m_stream, logger->cloneWithSuffix("TrackFindingAlg"))
+            m_finding(m_finding_config, m_mr, m_vo.async_copy(), m_queue,
+                      logger->cloneWithSuffix("TrackFindingAlg")),
+            m_fitting_config(create_and_setup_fitting_config()),
+            m_fitting(m_fitting_config, m_mr, m_vo.async_copy(), m_queue,
+                      logger->cloneWithSuffix("TrackFittingAlg"))
     {
-        // Tell the user what device is being used.
-        int device = 0;
-        CUDA_ERROR_CHECK(cudaGetDevice(&device));
-        cudaDeviceProp props;
-        CUDA_ERROR_CHECK(cudaGetDeviceProperties(&props, device));
-        std::cout << "Using CUDA device: " << props.name << " [id: " << device
-                << ", bus: " << props.pciBusID
-                << ", device: " << props.pciDeviceID << "]" << std::endl;
+        std::cout << "Using device ID: " << m_device_id << std::endl;
 
         initialize();
     }
@@ -427,11 +385,13 @@ void TracccGpuStandalone::initialize()
         m_detector_opts.digitization_file, traccc::data_format::json);
     auto m_det_descr_data = vecmem::get_data(m_det_descr_storage);
     m_device_det_descr = traccc::silicon_detector_description::buffer(
-            static_cast<traccc::silicon_detector_description::buffer::size_type>(
-                m_det_descr_storage.size()), *m_device_mr);
+        static_cast<traccc::silicon_detector_description::buffer::size_type>(
+            m_det_descr_storage.size()),
+        m_vo.device_mr());
     m_copy.setup(m_device_det_descr)->wait();
-    m_copy(m_det_descr_data, m_device_det_descr)->wait();
-    m_stream.synchronize();
+    m_copy(vecmem::get_data(m_det_descr_storage), m_device_det_descr)->wait();
+
+    m_queue.synchronize();
 
     // fill the det description to geometry id map
     m_geomIdMap.clear();
@@ -441,11 +401,11 @@ void TracccGpuStandalone::initialize()
     }
 
     traccc::io::read_detector(
-        m_detector, m_host_mr, m_detector_opts.detector_file,
+        m_detector, m_vo.host_mr(), m_detector_opts.detector_file,
         m_detector_opts.material_file, m_detector_opts.grid_file);
     m_device_detector =
-        traccc::buffer_from_host_detector(m_detector, *m_device_mr, m_copy);
-    m_stream.synchronize();
+        traccc::buffer_from_host_detector(m_detector, m_vo.device_mr(), m_copy);
+    m_queue.synchronize();
 
     return;
 }
@@ -457,42 +417,45 @@ TracccResults TracccGpuStandalone::run(
 
     // Read cells
     if (show_stats) start_read = std::chrono::high_resolution_clock::now();
-    traccc::edm::silicon_cell_collection::host read_out(m_host_mr);
-    read_cells(read_out, cells, &m_det_descr_storage, true, false);
+    traccc::edm::silicon_cell_collection::host read_out(m_vo.host_mr());
+    read_cells(read_out, cells, true, false);
     if (show_stats) end_read = std::chrono::high_resolution_clock::now();
 
     // Copy to device
     if (show_stats) start_copy_in = std::chrono::high_resolution_clock::now();
     traccc::edm::silicon_cell_collection::buffer cells_buffer(
-        static_cast<unsigned int>(read_out.size()), m_cached_device_mr);
-    m_copy(vecmem::get_data(read_out), cells_buffer)->ignore();
+        static_cast<unsigned int>(read_out.size()), m_mr.main);
+    m_copy.setup(cells_buffer)->wait();
+    m_copy(vecmem::get_data(read_out), cells_buffer)->wait();
     if (show_stats) end_copy_in = std::chrono::high_resolution_clock::now();
 
     // Clusterization
     if (show_stats) start_cluster = std::chrono::high_resolution_clock::now();
     auto unsorted_measurements =
         m_clusterization(cells_buffer, m_device_det_descr);
-    auto measurements = 
+    auto measurements =
         m_measurement_sorting(unsorted_measurements);
+    m_queue.synchronize();
     if (show_stats) end_cluster = std::chrono::high_resolution_clock::now();
 
     // Spacepoint formation
     if (show_stats) start_spacepoint = std::chrono::high_resolution_clock::now();
     auto spacepoints =
         m_spacepoint_formation(m_device_detector, measurements);
+    m_queue.synchronize();
     if (show_stats) end_spacepoint = std::chrono::high_resolution_clock::now();
 
     // Seeding
     if (show_stats) start_seeding = std::chrono::high_resolution_clock::now();
     auto seeds = m_seeding(spacepoints);
-    // traccc::edm::seed_collection::buffer seeds = m_gbts_seeding(spacepoints, measurements);
+    m_queue.synchronize();
     if (show_stats) end_seeding = std::chrono::high_resolution_clock::now();
 
     // Track parameter estimation
     if (show_stats) start_params = std::chrono::high_resolution_clock::now();
     auto track_params =
-        m_track_parameter_estimation(measurements, spacepoints,
-            seeds, m_field_vec);
+        m_track_parameter_estimation(measurements, spacepoints, seeds, m_field_vec);
+    m_queue.synchronize();
     if (show_stats) end_params = std::chrono::high_resolution_clock::now();
 
     // Track finding
@@ -501,57 +464,83 @@ TracccResults TracccGpuStandalone::run(
         m_device_detector, m_field, measurements, track_params);
     if (show_stats) end_finding = std::chrono::high_resolution_clock::now();
 
+    // Track fitting
+    if (show_stats) start_fitting = std::chrono::high_resolution_clock::now();
+    auto track_states = m_fitting(m_device_detector, m_field, track_candidates);
+    if (show_stats) end_fitting = std::chrono::high_resolution_clock::now();
+
     // Copy results back to host
     if (show_stats) start_copy_out = std::chrono::high_resolution_clock::now();
     traccc::edm::track_container<traccc::default_algebra>::host
-        track_states_host{m_host_mr};
+        track_states_host{m_vo.host_mr()};
 
-    m_copy(track_candidates.tracks, track_states_host.tracks,
-            vecmem::copy::type::device_to_host)->wait();
-    m_copy(track_candidates.states, track_states_host.states,
-            vecmem::copy::type::device_to_host)->wait();
+    m_copy(track_states.tracks, track_states_host.tracks)->wait();
+    m_copy(track_states.states, track_states_host.states)->wait();
 
     // copy measurements back to host
-    traccc::edm::measurement_collection<traccc::default_algebra>::host measurements_host(m_host_mr);
-    m_copy(track_candidates.measurements, measurements_host, vecmem::copy::type::device_to_host)->wait();
+    traccc::edm::measurement_collection<traccc::default_algebra>::host measurements_host(m_vo.host_mr());
+    m_copy(measurements, measurements_host)->wait();
     if (show_stats) end_copy_out = std::chrono::high_resolution_clock::now();
 
-    if (show_stats) 
+    traccc::edm::measurement_collection<traccc::default_algebra>::host
+        measurements_per_event_alpaka{m_vo.host_mr()};
+    traccc::edm::spacepoint_collection::host spacepoints_per_event_alpaka{
+        m_vo.host_mr()};
+    traccc::edm::seed_collection::host seeds_alpaka{m_vo.host_mr()};
+    traccc::bound_track_parameters_collection_types::host params_alpaka{
+        &m_vo.host_mr()};
+    traccc::edm::track_collection<traccc::default_algebra>::host
+        track_candidates_alpaka{m_vo.host_mr()};
+    traccc::edm::track_container<traccc::default_algebra>::host
+        track_states_alpaka{m_vo.host_mr()};
+
+    m_copy(measurements, measurements_per_event_alpaka)->wait();
+    m_copy(spacepoints, spacepoints_per_event_alpaka)->wait();
+    m_copy(seeds, seeds_alpaka)->wait();
+    // m_copy(params, params_alpaka)->wait();
+    // m_copy(track_candidates.tracks, track_candidates_alpaka)->wait();
+    // m_copy(track_states.tracks, track_states_alpaka.tracks)->wait();
+    // m_copy(track_states.states, track_states_alpaka.states)->wait();
+    m_queue.synchronize();
+
+    std::cout << "Number of spacepoints " << spacepoints_per_event_alpaka.size();
+
+    if (show_stats)
     {
         auto end_total = std::chrono::high_resolution_clock::now();
 
         // Print timing information
         std::cout << "\n=== Timing Information ===" << std::endl;
-        std::cout << "Read cells:          " 
-                << std::chrono::duration<double, std::milli>(end_read - start_read).count() 
+        std::cout << "Read cells:          "
+                << std::chrono::duration<double, std::milli>(end_read - start_read).count()
                 << " ms" << std::endl;
-        std::cout << "Copy to device:      " 
-                << std::chrono::duration<double, std::milli>(end_copy_in - start_copy_in).count() 
+        std::cout << "Copy to device:      "
+                << std::chrono::duration<double, std::milli>(end_copy_in - start_copy_in).count()
                 << " ms" << std::endl;
-        std::cout << "Clusterization:      " 
-                << std::chrono::duration<double, std::milli>(end_cluster - start_cluster).count() 
+        std::cout << "Clusterization:      "
+                << std::chrono::duration<double, std::milli>(end_cluster - start_cluster).count()
                 << " ms" << std::endl;
-        std::cout << "Spacepoint form.:    " 
-                << std::chrono::duration<double, std::milli>(end_spacepoint - start_spacepoint).count() 
+        std::cout << "Spacepoint form.:    "
+                << std::chrono::duration<double, std::milli>(end_spacepoint - start_spacepoint).count()
                 << " ms" << std::endl;
-        std::cout << "Seeding:             " 
-                << std::chrono::duration<double, std::milli>(end_seeding - start_seeding).count() 
+        std::cout << "Seeding:             "
+                << std::chrono::duration<double, std::milli>(end_seeding - start_seeding).count()
                 << " ms" << std::endl;
-        std::cout << "Track param. est.:   " 
-                << std::chrono::duration<double, std::milli>(end_params - start_params).count() 
+        std::cout << "Track param. est.:   "
+                << std::chrono::duration<double, std::milli>(end_params - start_params).count()
                 << " ms" << std::endl;
-        std::cout << "Track finding:       " 
-                << std::chrono::duration<double, std::milli>(end_finding - start_finding).count() 
+        std::cout << "Track finding:       "
+                << std::chrono::duration<double, std::milli>(end_finding - start_finding).count()
                 << " ms" << std::endl;
-        // std::cout << "Track fitting:       " 
-        //         << std::chrono::duration<double, std::milli>(end_fitting - start_fitting).count() 
-        //         << " ms" << std::endl;
-        std::cout << "Copy to host:        " 
-                << std::chrono::duration<double, std::milli>(end_copy_out - start_copy_out).count() 
+        std::cout << "Track fitting:       "
+                << std::chrono::duration<double, std::milli>(end_fitting - start_fitting).count()
+                << " ms" << std::endl;
+        std::cout << "Copy to host:        "
+                << std::chrono::duration<double, std::milli>(end_copy_out - start_copy_out).count()
                 << " ms" << std::endl;
         std::cout << "------------------------" << std::endl;
-        std::cout << "Total time:          " 
-                << std::chrono::duration<double, std::milli>(end_total - start_total).count() 
+        std::cout << "Total time:          "
+                << std::chrono::duration<double, std::milli>(end_total - start_total).count()
                 << " ms" << std::endl;
         std::cout << "=========================\n" << std::endl;
 
@@ -559,10 +548,8 @@ TracccResults TracccGpuStandalone::run(
         std::cout << "Number of spacepoints: " << m_copy.get_size(spacepoints) << std::endl;
         std::cout << "Number of seeds: " << m_copy.get_size(seeds) << std::endl;
         std::cout << "Number of track params: " << m_copy.get_size(track_params) << std::endl;
-        traccc::edm::track_container<traccc::default_algebra>::host track_candidates_host{m_host_mr};
-        m_copy(track_candidates.tracks, track_candidates_host.tracks,
-               vecmem::copy::type::device_to_host)->wait();
-        std::cout << "Number of smoothed tracks: " << track_states_host.tracks.size() << std::endl;
+        std::cout << "Number of found tracks:  " << m_copy.get_size(track_candidates.tracks) << std::endl;
+        std::cout << "Number of fitted tracks: " << track_states_host.tracks.size() << std::endl;
 
     }
 
@@ -578,7 +565,7 @@ std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(
     std::vector<traccc::io::csv::cell> cells;
     cells.reserve(num_cells);
 
-    for (size_t i = 0; i < num_cells; ++i) 
+    for (size_t i = 0; i < num_cells; ++i)
     {
 
         traccc::io::csv::cell cell;
@@ -612,7 +599,7 @@ std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>>
     for (const auto &cell : cells) {
         counts[cell.geometry_id]++;
     }
-    
+
     // Reserve space for each geometry_id
     for (const auto& [geom_id, count] : counts) {
         result[geom_id].reserve(count);
@@ -620,14 +607,14 @@ std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>>
 
     for (const auto &iocell : cells)
     {
-        result[iocell.geometry_id].emplace_back(iocell.geometry_id, iocell.measurement_id, 
-                            iocell.channel0, iocell.channel1, 
+        result[iocell.geometry_id].emplace_back(iocell.geometry_id, iocell.measurement_id,
+                            iocell.channel0, iocell.channel1,
                             iocell.timestamp, iocell.value);
     }
 
     // Sorting happens on the client side!
     // put here again for redundancy
-    for (auto& [_, cells] : result) 
+    for (auto& [_, cells] : result)
     {
         std::sort(cells.begin(), cells.end(), ::cell_order());
     }
@@ -635,9 +622,8 @@ std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>>
     return result;
 }
 
-void TracccGpuStandalone::read_cells(traccc::edm::silicon_cell_collection::host &out, 
-                const std::vector<traccc::io::csv::cell> &cells, 
-                const traccc::silicon_detector_description::host* dd,
+void TracccGpuStandalone::read_cells(traccc::edm::silicon_cell_collection::host &out,
+                const std::vector<traccc::io::csv::cell> &cells,
                 bool deduplicate,
                 bool use_acts_geometry_id)
 {
@@ -669,4 +655,4 @@ void TracccGpuStandalone::read_cells(traccc::edm::silicon_cell_collection::host 
     }
 }
 
-#endif 
+#endif

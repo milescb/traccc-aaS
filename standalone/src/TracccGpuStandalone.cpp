@@ -1,5 +1,35 @@
 #include "TracccGpuStandalone.hpp"
 
+#include <fstream>
+#include <vector>
+#include <string>
+#include <iostream>
+
+#include "traccc/io/csv/cell.hpp"
+
+void write_csv(const std::vector<traccc::io::csv::cell>& cells, const std::string& filename) {
+    std::ofstream out(filename);
+    if (!out.is_open()) {
+        std::cerr << "Error: Could not open file " << filename << " for writing." << std::endl;
+        return;
+    }
+
+    // Write the CSV header
+    out << "geometry_id,measurement_id,channel0,channel1,timestamp,value\n";
+
+    // Write the data for each cell
+    for (const auto& c : cells) {
+        out << c.geometry_id << ","
+            << c.measurement_id << ","
+            << c.channel0 << ","
+            << c.channel1 << ","
+            << c.timestamp << ","
+            << c.value << "\n";
+    }
+
+    out.close();
+}
+
 std::vector<traccc::io::csv::cell> read_csv(
     const std::string &filename,
     const std::map<int64_t, uint64_t> athenaToDetrayMap,
@@ -46,13 +76,12 @@ int main(int argc, char *argv[])
     std::cout << "Using device ID: " << deviceID << std::endl;
     std::cout << "Running " << argv[0] << " on " << event_file << std::endl;
 
-    vecmem::host_memory_resource host_mr;
-    vecmem::cuda::device_memory_resource device_mr(deviceID);
-    
-    TracccGpuStandalone traccc_gpu(&host_mr, &device_mr, deviceID);
+    TracccGpuStandalone traccc_gpu(deviceID);
    
     std::vector<traccc::io::csv::cell> cells = read_csv(
         event_file, traccc_gpu.getAthenaToDetrayMap(), true);
+
+    write_csv(cells, "/afs/cern.ch/user/m/mcochran/Tracking/traccc-aaS/client/cells-with-detray.csv");
 
     auto traccc_result = traccc_gpu.run(cells, true);
 
