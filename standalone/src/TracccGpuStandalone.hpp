@@ -478,48 +478,48 @@ TracccResults TracccGpuStandalone::run(
     m_queue.synchronize();
     if (show_stats) end_seeding = std::chrono::high_resolution_clock::now();
 
-    // Track parameter estimation
-    if (show_stats) start_params = std::chrono::high_resolution_clock::now();
-    auto track_params =
-        m_track_parameter_estimation(m_field, measurements, spacepoints, seeds);
-    m_queue.synchronize();
-    if (show_stats) end_params = std::chrono::high_resolution_clock::now();
+    // // Track parameter estimation
+    // if (show_stats) start_params = std::chrono::high_resolution_clock::now();
+    // auto track_params =
+    //     m_track_parameter_estimation(m_field, measurements, spacepoints, seeds);
+    // m_queue.synchronize();
+    // if (show_stats) end_params = std::chrono::high_resolution_clock::now();
 
-    // Track finding
-    if (show_stats) start_finding = std::chrono::high_resolution_clock::now();
-    auto track_candidates = m_finding(
-        m_device_detector, m_field, measurements, track_params);
-    if (show_stats) end_finding = std::chrono::high_resolution_clock::now();
+    // // Track finding
+    // if (show_stats) start_finding = std::chrono::high_resolution_clock::now();
+    // auto track_candidates = m_finding(
+    //     m_device_detector, m_field, measurements, track_params);
+    // if (show_stats) end_finding = std::chrono::high_resolution_clock::now();
 
-    // Track fitting
-    if (show_stats) start_fitting = std::chrono::high_resolution_clock::now();
-    auto track_states = m_fitting(m_device_detector, m_field, track_candidates);
-    if (show_stats) end_fitting = std::chrono::high_resolution_clock::now();
+    // // Track fitting
+    // if (show_stats) start_fitting = std::chrono::high_resolution_clock::now();
+    // auto track_states = m_fitting(m_device_detector, m_field, track_candidates);
+    // if (show_stats) end_fitting = std::chrono::high_resolution_clock::now();
 
-    // Copy results back to host
-    if (show_stats) start_copy_out = std::chrono::high_resolution_clock::now();
+    // // Copy results back to host
+    // if (show_stats) start_copy_out = std::chrono::high_resolution_clock::now();
     traccc::edm::track_container<traccc::default_algebra>::host
         track_states_host{m_vo.host_mr()};
 
-    m_copy(track_states.tracks, track_states_host.tracks)->wait();
-    m_copy(track_states.states, track_states_host.states)->wait();
+    // m_copy(track_states.tracks, track_states_host.tracks)->wait();
+    // m_copy(track_states.states, track_states_host.states)->wait();
 
-    // copy measurements back to host
+    // // copy measurements back to host
     traccc::edm::measurement_collection::host measurements_host(m_vo.host_mr());
-    m_copy(measurements, measurements_host)->wait();
-    if (show_stats) end_copy_out = std::chrono::high_resolution_clock::now();
+    // m_copy(measurements, measurements_host)->wait();
+    // if (show_stats) end_copy_out = std::chrono::high_resolution_clock::now();
 
     traccc::edm::measurement_collection::host
         measurements_per_event_alpaka{m_vo.host_mr()};
     traccc::edm::spacepoint_collection::host spacepoints_per_event_alpaka{
         m_vo.host_mr()};
     traccc::edm::seed_collection::host seeds_alpaka{m_vo.host_mr()};
-    traccc::bound_track_parameters_collection_types::host params_alpaka{
-        &m_vo.host_mr()};
-    traccc::edm::track_collection<traccc::default_algebra>::host
-        track_candidates_alpaka{m_vo.host_mr()};
-    traccc::edm::track_container<traccc::default_algebra>::host
-        track_states_alpaka{m_vo.host_mr()};
+    // traccc::bound_track_parameters_collection_types::host params_alpaka{
+    //     &m_vo.host_mr()};
+    // traccc::edm::track_collection<traccc::default_algebra>::host
+    //     track_candidates_alpaka{m_vo.host_mr()};
+    // traccc::edm::track_container<traccc::default_algebra>::host
+    //     track_states_alpaka{m_vo.host_mr()};
 
     m_copy(measurements, measurements_per_event_alpaka)->wait();
     m_copy(spacepoints, spacepoints_per_event_alpaka)->wait();
@@ -553,30 +553,30 @@ TracccResults TracccGpuStandalone::run(
         std::cout << "Seeding:             "
                 << std::chrono::duration<double, std::milli>(end_seeding - start_seeding).count()
                 << " ms" << std::endl;
-        std::cout << "Track param. est.:   "
-                << std::chrono::duration<double, std::milli>(end_params - start_params).count()
-                << " ms" << std::endl;
-        std::cout << "Track finding:       "
-                << std::chrono::duration<double, std::milli>(end_finding - start_finding).count()
-                << " ms" << std::endl;
-        std::cout << "Track fitting:       "
-                << std::chrono::duration<double, std::milli>(end_fitting - start_fitting).count()
-                << " ms" << std::endl;
-        std::cout << "Copy to host:        "
-                << std::chrono::duration<double, std::milli>(end_copy_out - start_copy_out).count()
-                << " ms" << std::endl;
-        std::cout << "------------------------" << std::endl;
-        std::cout << "Total time:          "
-                << std::chrono::duration<double, std::milli>(end_total - start_total).count()
-                << " ms" << std::endl;
-        std::cout << "=========================\n" << std::endl;
+        // std::cout << "Track param. est.:   "
+        //         << std::chrono::duration<double, std::milli>(end_params - start_params).count()
+        //         << " ms" << std::endl;
+        // std::cout << "Track finding:       "
+        //         << std::chrono::duration<double, std::milli>(end_finding - start_finding).count()
+        //         << " ms" << std::endl;
+        // std::cout << "Track fitting:       "
+        //         << std::chrono::duration<double, std::milli>(end_fitting - start_fitting).count()
+        //         << " ms" << std::endl;
+        // std::cout << "Copy to host:        "
+        //         << std::chrono::duration<double, std::milli>(end_copy_out - start_copy_out).count()
+        //         << " ms" << std::endl;
+        // std::cout << "------------------------" << std::endl;
+        // std::cout << "Total time:          "
+        //         << std::chrono::duration<double, std::milli>(end_total - start_total).count()
+        //         << " ms" << std::endl;
+        // std::cout << "=========================\n" << std::endl;
 
         std::cout << "Number of measurements: " << m_copy.get_size(measurements) << std::endl;
         std::cout << "Number of spacepoints: " << m_copy.get_size(spacepoints) << std::endl;
         std::cout << "Number of seeds: " << m_copy.get_size(seeds) << std::endl;
-        std::cout << "Number of track params: " << m_copy.get_size(track_params) << std::endl;
-        std::cout << "Number of found tracks:  " << m_copy.get_size(track_candidates.tracks) << std::endl;
-        std::cout << "Number of fitted tracks: " << track_states_host.tracks.size() << std::endl;
+        // std::cout << "Number of track params: " << m_copy.get_size(track_params) << std::endl;
+        // std::cout << "Number of found tracks:  " << m_copy.get_size(track_candidates.tracks) << std::endl;
+        // std::cout << "Number of fitted tracks: " << track_states_host.tracks.size() << std::endl;
 
     }
 
