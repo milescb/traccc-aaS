@@ -16,9 +16,9 @@
 #include "traccc/alpaka/clusterization/measurement_sorting_algorithm.hpp"
 #include "traccc/alpaka/finding/combinatorial_kalman_filter_algorithm.hpp"
 #include "traccc/alpaka/fitting/kalman_fitting_algorithm.hpp"
-#include "traccc/alpaka/seeding/seeding_algorithm.hpp"
-#include "traccc/alpaka/seeding/spacepoint_formation_algorithm.hpp"
-#include "traccc/alpaka/seeding/track_params_estimation.hpp"
+#include "traccc/alpaka/seeding/triplet_seeding_algorithm.hpp"
+#include "traccc/alpaka/seeding/silicon_pixel_spacepoint_formation_algorithm.hpp"
+#include "traccc/alpaka/seeding/seed_parameter_estimation_algorithm.hpp"
 #include "traccc/alpaka/utils/get_device_info.hpp"
 #include "traccc/alpaka/utils/queue.hpp"
 #include "traccc/alpaka/utils/vecmem_objects.hpp"
@@ -28,13 +28,15 @@
 #include "traccc/geometry/detector.hpp"
 #include "traccc/geometry/detector_buffer.hpp"
 #include "traccc/geometry/host_detector.hpp"
-#include "traccc/geometry/silicon_detector_description.hpp"
+#include "traccc/geometry/detector_design_description.hpp"
+#include "traccc/geometry/detector_conditions_description.hpp"
 #include "traccc/utils/algorithm.hpp"
 #include "traccc/utils/memory_resource.hpp"
 #include "traccc/device/container_d2h_copy_alg.hpp"
 
 // magnetic field include(s).
 #include "traccc/bfield/magnetic_field.hpp"
+#include "traccc/bfield/magnetic_field_types.hpp"
 #include "traccc/bfield/construct_const_bfield.hpp"
 #include "traccc/definitions/primitives.hpp"
 #include "traccc/io/read_magnetic_field.hpp"
@@ -87,7 +89,7 @@ struct cell_order {
 
 struct TracccResults {
     traccc::edm::track_container<traccc::default_algebra>::host tracks_and_states;
-    traccc::edm::measurement_collection<traccc::default_algebra>::host measurements;
+    traccc::edm::measurement_collection::host measurements;
 };
 
 traccc::magnetic_field make_magnetic_field(std::string filename) {
@@ -109,7 +111,7 @@ using stepper_type =
                         detray::constrained_step<scalar_type>>;
 
 using spacepoint_formation_algorithm =
-    traccc::alpaka::spacepoint_formation_algorithm;
+    traccc::alpaka::silicon_pixel_spacepoint_formation_algorithm;
 using clustering_algorithm = traccc::alpaka::clusterization_algorithm;
 using finding_algorithm =
     traccc::alpaka::combinatorial_kalman_filter_algorithm;
@@ -217,6 +219,8 @@ private:
     vecmem::copy& m_copy;
     /// Unified memory resource struct
     traccc::memory_resource m_mr;
+    /// Non-pinned host memory resource for large host-only data (descriptor, detector)
+    vecmem::host_memory_resource m_host_mr;
 
     /// digitization configuration
     std::unique_ptr<traccc::digitization_config> m_digi_cfg;
@@ -252,12 +256,14 @@ private:
     /// const. field for the track finding and fitting
     traccc::vector3 m_field_vec;
 
-    /// Detector description
-    traccc::silicon_detector_description::host m_det_descr_storage;
-    std::reference_wrapper<const traccc::silicon_detector_description::host>
-        m_det_descr;
-    /// Detector description buffer
-    traccc::silicon_detector_description::buffer m_device_det_descr;
+    /// Detector design description (segmentation geometry)
+    traccc::detector_design_description::host m_det_descr_design;
+    /// Detector conditions description (per-module conditions)
+    traccc::detector_conditions_description::host m_det_descr_cond;
+    /// Detector design description buffer (device)
+    traccc::detector_design_description::buffer m_device_det_descr_design;
+    /// Detector conditions description buffer (device)
+    traccc::detector_conditions_description::buffer m_device_det_cond;
 
     /// Host detector
     traccc::host_detector m_detector;
@@ -271,9 +277,9 @@ private:
     /// Spacepoint formation algorithm
     spacepoint_formation_algorithm m_spacepoint_formation;
     /// Seeding algorithm
-    traccc::alpaka::seeding_algorithm m_seeding;
+    traccc::alpaka::triplet_seeding_algorithm m_seeding;
     /// Track parameter estimation algorithm
-    traccc::alpaka::track_params_estimation m_track_parameter_estimation;
+    traccc::alpaka::seed_parameter_estimation_algorithm m_track_parameter_estimation;
 
     /// Track finding algorithm
     finding_algorithm m_finding;
@@ -309,9 +315,8 @@ public:
             m_finding_config(create_and_setup_finding_config()),
             m_field(make_magnetic_field(geoDir + "ITk_bfield.cvf")),
             m_field_vec({0.f, 0.f, m_finder_config.bFieldInZ}),
-            m_det_descr_storage(m_vo.host_mr()),
-            m_det_descr(m_det_descr_storage),
-            m_device_det_descr(0, m_vo.device_mr()),
+            m_det_descr_design(m_host_mr),
+            m_det_descr_cond(m_host_mr),
             m_clusterization(m_mr, m_vo.async_copy(), m_queue,
                              m_clustering_config,
                              logger->cloneWithSuffix("ClusteringAlg")),
@@ -367,6 +372,7 @@ void TracccGpuStandalone::initialize()
     // HACK: hard code location of detector and digitization file
     m_detector_opts.detector_file = m_geoDir + "/detray_detector_geometry.json";
     m_detector_opts.digitization_file = m_geoDir + "/ITk_digitization_config.json";
+    m_detector_opts.conditions_file = m_geoDir + "/ITk_digitization_config.json";
     m_detector_opts.grid_file = m_geoDir + "/detray_detector_surface_grids.json";
     m_detector_opts.material_file = m_geoDir + "/detray_detector_material_maps.json";
 
@@ -381,30 +387,51 @@ void TracccGpuStandalone::initialize()
     }
 
     traccc::io::read_detector_description(
-        m_det_descr_storage, m_detector_opts.detector_file,
-        m_detector_opts.digitization_file, traccc::data_format::json);
-    auto m_det_descr_data = vecmem::get_data(m_det_descr_storage);
-    m_device_det_descr = traccc::silicon_detector_description::buffer(
-        static_cast<traccc::silicon_detector_description::buffer::size_type>(
-            m_det_descr_storage.size()),
+        m_det_descr_design, m_det_descr_cond,
+        m_detector_opts.detector_file,
+        m_detector_opts.digitization_file,
+        m_detector_opts.conditions_file,
+        traccc::data_format::json);
+
+    // Setup detector design description buffer
+    m_device_det_descr_design = traccc::detector_design_description::buffer(
+        [&]() {
+            std::vector<unsigned int> sizes(m_det_descr_design.size());
+            for (std::size_t i = 0; i < m_det_descr_design.size(); ++i) {
+                auto d = m_det_descr_design.at(i);
+                sizes[i] = std::max(
+                    static_cast<unsigned int>(d.bin_edges_x().size()),
+                    static_cast<unsigned int>(d.bin_edges_y().size()));
+            }
+            return sizes;
+        }(),
         m_vo.device_mr());
-    m_copy.setup(m_device_det_descr)->wait();
-    m_copy(vecmem::get_data(m_det_descr_storage), m_device_det_descr)->wait();
+    m_vo.copy().setup(m_device_det_descr_design)->wait();
+    m_vo.copy()(vecmem::get_data(m_det_descr_design), m_device_det_descr_design)->wait();
+
+    // Setup detector conditions description buffer (fixed-size)
+    m_device_det_cond = traccc::detector_conditions_description::buffer(
+        static_cast<traccc::detector_conditions_description::buffer::size_type>(
+            m_det_descr_cond.size()),
+        m_vo.device_mr());
+    m_vo.copy().setup(m_device_det_cond)->wait();
+    m_vo.copy()(vecmem::get_data(m_det_descr_cond), m_device_det_cond,
+                vecmem::copy::type::host_to_device)->wait();
 
     m_queue.synchronize();
 
     // fill the det description to geometry id map
     m_geomIdMap.clear();
-    m_geomIdMap.reserve(m_det_descr_storage.geometry_id().size());
-    for (unsigned int i = 0; i < m_det_descr_storage.geometry_id().size(); ++i) {
-        m_geomIdMap[m_det_descr_storage.geometry_id()[i].value()] = i;
+    m_geomIdMap.reserve(m_det_descr_cond.geometry_id().size());
+    for (unsigned int i = 0; i < m_det_descr_cond.geometry_id().size(); ++i) {
+        m_geomIdMap[m_det_descr_cond.geometry_id()[i].value()] = i;
     }
 
     traccc::io::read_detector(
-        m_detector, m_vo.host_mr(), m_detector_opts.detector_file,
+        m_detector, m_host_mr, m_detector_opts.detector_file,
         m_detector_opts.material_file, m_detector_opts.grid_file);
     m_device_detector =
-        traccc::buffer_from_host_detector(m_detector, m_vo.device_mr(), m_copy);
+        traccc::buffer_from_host_detector(m_detector, m_vo.device_mr(), m_vo.copy());
     m_queue.synchronize();
 
     return;
@@ -432,7 +459,7 @@ TracccResults TracccGpuStandalone::run(
     // Clusterization
     if (show_stats) start_cluster = std::chrono::high_resolution_clock::now();
     auto unsorted_measurements =
-        m_clusterization(cells_buffer, m_device_det_descr);
+        m_clusterization(cells_buffer, m_device_det_descr_design, m_device_det_cond);
     auto measurements =
         m_measurement_sorting(unsorted_measurements);
     m_queue.synchronize();
@@ -454,7 +481,7 @@ TracccResults TracccGpuStandalone::run(
     // Track parameter estimation
     if (show_stats) start_params = std::chrono::high_resolution_clock::now();
     auto track_params =
-        m_track_parameter_estimation(measurements, spacepoints, seeds, m_field_vec);
+        m_track_parameter_estimation(m_field, measurements, spacepoints, seeds);
     m_queue.synchronize();
     if (show_stats) end_params = std::chrono::high_resolution_clock::now();
 
@@ -478,11 +505,11 @@ TracccResults TracccGpuStandalone::run(
     m_copy(track_states.states, track_states_host.states)->wait();
 
     // copy measurements back to host
-    traccc::edm::measurement_collection<traccc::default_algebra>::host measurements_host(m_vo.host_mr());
+    traccc::edm::measurement_collection::host measurements_host(m_vo.host_mr());
     m_copy(measurements, measurements_host)->wait();
     if (show_stats) end_copy_out = std::chrono::high_resolution_clock::now();
 
-    traccc::edm::measurement_collection<traccc::default_algebra>::host
+    traccc::edm::measurement_collection::host
         measurements_per_event_alpaka{m_vo.host_mr()};
     traccc::edm::spacepoint_collection::host spacepoints_per_event_alpaka{
         m_vo.host_mr()};
