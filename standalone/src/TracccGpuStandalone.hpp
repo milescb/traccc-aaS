@@ -253,8 +253,6 @@ private:
     traccc::magnetic_field m_host_field;
     /// device field object
     traccc::magnetic_field m_field;
-    /// const. field for the track finding and fitting
-    traccc::vector3 m_field_vec;
 
     /// Detector design description (segmentation geometry)
     traccc::detector_design_description::host m_det_descr_design;
@@ -283,10 +281,10 @@ private:
 
     /// Track finding algorithm
     finding_algorithm m_finding;
-    /// Track fitting algorithm
-    fitting_algorithm m_fitting;
     /// Configuration for the track fitting
     fitting_algorithm::config_type m_fitting_config;
+    /// Track fitting algorithm
+    fitting_algorithm m_fitting;
 
     // Helper function to read in cells
     std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>> read_all_cells(
@@ -314,7 +312,6 @@ public:
             m_grid_config(m_finder_config),
             m_finding_config(create_and_setup_finding_config()),
             m_field(make_magnetic_field(geoDir + "ITk_bfield.cvf")),
-            m_field_vec({0.f, 0.f, m_finder_config.bFieldInZ}),
             m_det_descr_design(m_host_mr),
             m_det_descr_cond(m_host_mr),
             m_clusterization(m_mr, m_vo.async_copy(), m_queue,
@@ -534,7 +531,7 @@ TracccResults TracccGpuStandalone::run(
 
     if (show_stats)
     {
-        auto end_total = std::chrono::high_resolution_clock::now();
+        end_total = std::chrono::high_resolution_clock::now();
 
         // Print timing information
         std::cout << "\n=== Timing Information ===" << std::endl;

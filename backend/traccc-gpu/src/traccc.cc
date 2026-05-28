@@ -24,7 +24,9 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <cuda_runtime_api.h>
+#if defined(TRITON_ENABLE_ROCM)
+#include <hip/hip_runtime.h>
+#endif
 
 #include <chrono>
 
@@ -222,13 +224,11 @@ class ModelState : public BackendModel {
     std::vector<int64_t> input_cell_properties_shape_;
     std::vector<int64_t> output_nb_shape_;
     std::vector<int64_t> output_shape_;
-
-    bool shape_initialized_;
 };
 
 //! Also possible problems in this function!
 ModelState::ModelState(TRITONBACKEND_Model* triton_model)
-    : BackendModel(triton_model), shape_initialized_(false)
+    : BackendModel(triton_model)
 {
   // Validate that the model's configuration matches what is supported
   // by this backend.
@@ -385,9 +385,7 @@ private:
         ModelState* model_state,
         TRITONBACKEND_ModelInstance* triton_model_instance)
         : BackendModelInstance(model_state, triton_model_instance),
-            model_state_(model_state),
-            host_mr_(),
-            device_mr_(DeviceId())
+            model_state_(model_state)
     {
     }
 
@@ -403,10 +401,6 @@ public:
 
     // define standalone object
     std::unique_ptr<TracccGpuStandalone> traccc_gpu_standalone_;
-
-    // Memory resources
-    vecmem::host_memory_resource host_mr_;
-    vecmem::cuda::device_memory_resource device_mr_;
 };
 
 TRITONSERVER_Error*
@@ -452,18 +446,17 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
     RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceSetState(
         instance, reinterpret_cast<void*>(instance_state)));
 
-    // Set the CUDA device for this thread
-    cudaError_t err = cudaSetDevice(instance_state->DeviceId());
-    if (err != cudaSuccess)
+#if defined(TRITON_ENABLE_ROCM)
+    hipError_t hip_err = hipSetDevice(instance_state->DeviceId());
+    if (hip_err != hipSuccess)
     {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
-            ("Failed to set CUDA device: " + std::string(cudaGetErrorString(err))).c_str());
+            ("hipSetDevice failed: " + std::string(hipGetErrorString(hip_err))).c_str());
     }
-  
+#endif
+
     instance_state->traccc_gpu_standalone_ = std::make_unique<TracccGpuStandalone>(
-        &instance_state->host_mr_,
-        &instance_state->device_mr_,
         instance_state->DeviceId()
     );
     return nullptr;  // success
@@ -520,16 +513,16 @@ TRITONBACKEND_ModelInstanceExecute(
         instance, reinterpret_cast<void**>(&instance_state)));
     ModelState* model_state = instance_state->StateForModel();
 
-    // Set the CUDA device for this thread
-    // Seems that this is necessary to set the device for each request
-    // Without leads to out-of-bounds memory access error
-    cudaError_t err = cudaSetDevice(instance_state->DeviceId());
-    if (err != cudaSuccess)
+#if defined(TRITON_ENABLE_ROCM)
+    // Necessary to set the device for each request to avoid out-of-bounds memory access
+    hipError_t hip_err = hipSetDevice(instance_state->DeviceId());
+    if (hip_err != hipSuccess)
     {
         return TRITONSERVER_ErrorNew(
             TRITONSERVER_ERROR_INTERNAL,
-            ("Failed to set CUDA device: " + std::string(cudaGetErrorString(err))).c_str());
+            ("hipSetDevice failed: " + std::string(hipGetErrorString(hip_err))).c_str());
     }
+#endif
 
     // 'responses' is initialized as a parallel array to 'requests',
     // with one TRITONBACKEND_Response object for each
@@ -625,16 +618,18 @@ TRITONBACKEND_ModelInstanceExecute(
             &input_cell_properties_buffer_memory_type_id));
 
     // Finalize the collector. If 'true' is returned, 'input_buffer'
-    // will not be valid until the backend synchronizes the CUDA
-    // stream or event that was used when creating the collector. For
-    // this backend, GPU is not supported and so no CUDA sync should
-    // be needed; so if 'true' is returned simply log an error.
-    const bool need_cuda_input_sync = collector.Finalize();
-    if (need_cuda_input_sync)
+    // will not be valid until the backend synchronizes the GPU device.
+    const bool need_gpu_input_sync = collector.Finalize();
+    if (need_gpu_input_sync)
     {
-        LOG_MESSAGE(
-            TRITONSERVER_LOG_ERROR,
-            "'Traccc' backend: unexpected CUDA sync required by collector");
+#if defined(TRITON_ENABLE_ROCM)
+        hipError_t sync_err = hipDeviceSynchronize();
+        if (sync_err != hipSuccess) {
+            LOG_MESSAGE(TRITONSERVER_LOG_ERROR,
+                (std::string("hipDeviceSynchronize failed after collector: ") +
+                 hipGetErrorString(sync_err)).c_str());
+        }
+#endif
     }
 
     // 'input_buffer' contains the batched input tensor. The backend can
@@ -685,7 +680,7 @@ TRITONBACKEND_ModelInstanceExecute(
               << " ms" << std::endl;
 
     // run the reco chain
-    bool print_stats = false;
+    bool print_stats = true;
     auto traccc_result = instance_state->traccc_gpu_standalone_->run(cells, print_stats);
 
     auto output_proc_start = std::chrono::high_resolution_clock::now();
@@ -891,15 +886,17 @@ TRITONBACKEND_ModelInstanceExecute(
 
     // Finalize the responder. If 'true' is returned, the output
     // tensors' data will not be valid until the backend synchronizes
-    // the CUDA stream or event that was used when creating the
-    // responder. For this backend, GPU is not supported and so no CUDA
-    // sync should be needed; so if 'true' is returned simply log an
-    // error.
-    const bool need_cuda_output_sync = responder.Finalize();
-    if (need_cuda_output_sync) {
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_ERROR,
-        "'traccc' backend: unexpected CUDA sync required by responder");
+    // the GPU device.
+    const bool need_gpu_output_sync = responder.Finalize();
+    if (need_gpu_output_sync) {
+#if defined(TRITON_ENABLE_ROCM)
+        hipError_t sync_err = hipDeviceSynchronize();
+        if (sync_err != hipSuccess) {
+            LOG_MESSAGE(TRITONSERVER_LOG_ERROR,
+                (std::string("hipDeviceSynchronize failed after responder: ") +
+                 hipGetErrorString(sync_err)).c_str());
+        }
+#endif
     }
 
     // Send all the responses that haven't already been sent because of

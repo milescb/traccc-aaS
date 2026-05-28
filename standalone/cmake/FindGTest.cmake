@@ -1,0 +1,13 @@
+# Stub to satisfy detray's leaked GTest dependency. We don't run detray tests.
+if(NOT TARGET GTest::GTest)
+    add_library(GTest::GTest INTERFACE IMPORTED)
+    add_library(GTest::Main INTERFACE IMPORTED)
+    add_library(GTest::gmock INTERFACE IMPORTED)
+    add_library(GTest::gmock_main INTERFACE IMPORTED)
+endif()
+set(GTEST_INCLUDE_DIRS "")
+set(GTEST_LIBRARIES GTest::GTest)
+set(GTEST_MAIN_LIBRARIES GTest::Main)
+set(GTEST_BOTH_LIBRARIES GTest::GTest GTest::Main)
+set(GTest_FOUND TRUE)
+set(GTEST_FOUND TRUE)

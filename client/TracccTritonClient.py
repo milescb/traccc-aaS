@@ -5,7 +5,7 @@ import sys
 
 import numpy as np
 import pandas as pd
-import awkward as ak
+# import awkward as ak
 
 import matplotlib.pyplot as plt
 import mplhep
@@ -133,39 +133,39 @@ def main():
         track_covariances.append(np.stack(cur_cov))
         track_geometry_ids.append(np.stack(cur_geo))
 
-    ak_measurements = ak.Array(track_measurements)
-    ak_covariances = ak.Array(track_covariances)
-    ak_geometry_ids = ak.Array(track_geometry_ids)
+    # ak_measurements = ak.Array(track_measurements)
+    # ak_covariances = ak.Array(track_covariances)
+    # ak_geometry_ids = ak.Array(track_geometry_ids)
 
-    print(f"Number of tracks: {len(trk_params)}")
-    print(f"Number of measurements per track: {ak.num(ak_measurements, axis=1)}")
-    print(f"Total measurements: {ak.sum(ak.num(ak_measurements, axis=1))}")
-    print(f"Track parameters shape: {trk_params.shape}")
-    print(f"Awkward measurements shape: {ak_measurements.type}")
-    print(f"Awkward covariances shape: {ak_covariances.type}")
-    print(f"Awkward geometry IDs shape: {ak_geometry_ids.type}")
+    # print(f"Number of tracks: {len(trk_params)}")
+    # print(f"Number of measurements per track: {ak.num(ak_measurements, axis=1)}")
+    # print(f"Total measurements: {ak.sum(ak.num(ak_measurements, axis=1))}")
+    # print(f"Track parameters shape: {trk_params.shape}")
+    # print(f"Awkward measurements shape: {ak_measurements.type}")
+    # print(f"Awkward covariances shape: {ak_covariances.type}")
+    # print(f"Awkward geometry IDs shape: {ak_geometry_ids.type}")
 
-    # Extract variances from covariances (diag elements 0 and 7)
-    ak_var_x = ak.Array([[cov[0] for cov in covs] for covs in track_covariances])
-    ak_var_y = ak.Array([[cov[6] for cov in covs] for covs in track_covariances])
+    # # Extract variances from covariances (diag elements 0 and 7)
+    # ak_var_x = ak.Array([[cov[0] for cov in covs] for covs in track_covariances])
+    # ak_var_y = ak.Array([[cov[6] for cov in covs] for covs in track_covariances])
 
-    # Example: Access measurements for first tracks
-    if len(ak_measurements) > 0:
-        print(f"\nTrack 0 has {len(ak_measurements[0])} measurements:")
-        print(f"  Local positions: {ak_measurements[0]}")
-        print(f"  Local variances (from diagonal): x={ak_var_x[0]}, y={ak_var_y[0]}")
-        print(f"  Geometry IDs: {ak_geometry_ids[0]}")
-    if len(ak_measurements) > 1:
-        print(f"\nTrack 1 has {len(ak_measurements[1])} measurements:")
-        print(f"  Local positions: {ak_measurements[1]}")
-        print(f"  Local variances (from diagonal): x={ak_var_x[1]}, y={ak_var_y[1]}")
-        print(f"  Geometry IDs: {ak_geometry_ids[1]}")
+    # # Example: Access measurements for first tracks
+    # if len(ak_measurements) > 0:
+    #     print(f"\nTrack 0 has {len(ak_measurements[0])} measurements:")
+    #     print(f"  Local positions: {ak_measurements[0]}")
+    #     print(f"  Local variances (from diagonal): x={ak_var_x[0]}, y={ak_var_y[0]}")
+    #     print(f"  Geometry IDs: {ak_geometry_ids[0]}")
+    # if len(ak_measurements) > 1:
+    #     print(f"\nTrack 1 has {len(ak_measurements[1])} measurements:")
+    #     print(f"  Local positions: {ak_measurements[1]}")
+    #     print(f"  Local variances (from diagonal): x={ak_var_x[1]}, y={ak_var_y[1]}")
+    #     print(f"  Geometry IDs: {ak_geometry_ids[1]}")
     
-    # Additional awkward array operations
-    print("\nAwkward array operations:")
-    print(f"Average measurements per track: {ak.mean(ak.num(ak_measurements, axis=1)):.2f}")
-    print(f"Max measurements in any track: {ak.max(ak.num(ak_measurements, axis=1))}")
-    print(f"Min measurements in any track: {ak.min(ak.num(ak_measurements, axis=1))}")
+    # # Additional awkward array operations
+    # print("\nAwkward array operations:")
+    # print(f"Average measurements per track: {ak.mean(ak.num(ak_measurements, axis=1)):.2f}")
+    # print(f"Max measurements in any track: {ak.max(ak.num(ak_measurements, axis=1))}")
+    # print(f"Min measurements in any track: {ak.min(ak.num(ak_measurements, axis=1))}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

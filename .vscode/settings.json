@@ -1,5 +1,5 @@
 {
-    "cmake.sourceDirectory": "/global/homes/m/milescb/tracking/traccc-aaS-gpu/traccc/",
+    "cmake.sourceDirectory": "/afs/cern.ch/user/m/mcochran/Tracking/traccc-aaS/traccc/",
     "cmake.generator": "Unix Makefiles",
     "cmake.configureArgs": [
         "-DCMAKE_BUILD_TYPE=Release",
@@ -10,16 +10,16 @@
         "-DTRACCC_SUPPORTED_DETECTORS=itk_detector;odd_detector"
     ],
     "cmake.parallelJobs": 20,
-    "cmake.buildDirectory": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/traccc_v1p0p0/build",
-    "cmake.installPrefix": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/traccc_v1p0p0/install",
+    "cmake.buildDirectory": "/eos/user/m/mcochran/traccc_shared_library/dev/build",
+    "cmake.installPrefix": "/eos/user/m/mcochran/traccc_shared_library/dev/install",
     "cmake.configureOnOpen": false,
     "terminal.integrated.env.linux": {
         "SOURCEDIR": "${workspaceFolder}/standalone",
-        "BUILDDIR": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/traccc_v1p0p0/build",
-        "INSTALLDIR": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/traccc_v1p0p0/install",
+        "BUILDDIR": "/eos/user/m/mcochran/traccc_shared_library/dev/build",
+        "INSTALLDIR": "/eos/user/m/mcochran/traccc_shared_library/dev/install",
         "DATADIR": "/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-01/",
-        "PATH": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/traccc_v1p0p0/install/bin:${env:PATH}",
-        "LD_LIBRARY_PATH": "/global/cfs/projectdirs/m3443/data/traccc-aaS/software/prod/traccc_v1p0p0/install/lib:${env:LD_LIBRARY_PATH}"
+        "PATH": "/eos/user/m/mcochran/traccc_shared_library/dev/install/bin:${env:PATH}",
+        "LD_LIBRARY_PATH": "/eos/user/m/mcochran/traccc_shared_library/dev/install/lib:${env:LD_LIBRARY_PATH}"
     },
     "todo.embedded.exclude": [
         "${workspaceFolder}/traccc/**",

@@ -30,20 +30,26 @@ project(TracccBackend LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include_directories(/usr/local/cuda/include/)
+# Shadow FindGTest so detray's leaked test dependency doesn't abort our build
+list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+# cmake's generation-time check validates INTERFACE_INCLUDE_DIRECTORIES of all
+# imported targets transitively linked by any SHARED library in the build. For
+# external packages (traccc, detray) it evaluates the install-tree view, which
+# resolves to CMAKE_INSTALL_PREFIX/include. Create that directory at configure
+# time so the existence check passes. The directory itself is never used.
+file(MAKE_DIRECTORY "${CMAKE_INSTALL_PREFIX}/include")
+
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../standalone/src)
 
 #
 # Options
 #
-# Must include options required for this project as well as any
-# projects included in this one by FetchContent.
-#
-# GPU support is disabled by default because recommended backend
-# doesn't use GPUs.
-#
-option(TRITON_ENABLE_GPU "Enable GPU support in backend" ON)
-option(TRITON_ENABLE_STATS "Include statistics collections in backend" ON)
+option(TRITON_ENABLE_ROCM   "Enable AMD ROCm support" ON)
+option(TRITON_ENABLE_ALPAKA "Use Alpaka portability layer (requires TRITON_ENABLE_ROCM)" ON)
+option(TRITON_ENABLE_STATS  "Include statistics collections in backend" ON)
+
+set(ROCM_PATH "/opt/rocm" CACHE PATH "ROCm installation path")
 
 set(TRITON_REPO_ORGANIZATION "https://github.com/triton-inference-server" CACHE STRING "Git repository to pull from")
 set(TRITON_COMMON_REPO_TAG "r25.02" CACHE STRING "Tag for triton-inference-server/common repo")
@@ -59,22 +65,94 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Set optimization flags based on build type
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-  message(STATUS "Building in Release mode with optimizations")
-  set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
-  set(CMAKE_CUDA_FLAGS_RELEASE "-O3 -DNDEBUG")
-elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -DNDEBUG")
-  set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "-O2 -g -DNDEBUG")
+#
+# ROCm/HIP Configuration
+#
+if(TRITON_ENABLE_ROCM)
+  set(TRITON_ROCM_HOME ${ROCM_PATH})
+
+  set(ENV{ROCM_PATH} ${TRITON_ROCM_HOME})
+  set(ENV{HIP_PATH}  ${TRITON_ROCM_HOME})
+
+  list(APPEND CMAKE_PREFIX_PATH
+    ${TRITON_ROCM_HOME}
+    ${TRITON_ROCM_HOME}/hip
+    ${TRITON_ROCM_HOME}/llvm
+    ${TRITON_ROCM_HOME}/lib/cmake
+    $ENV{ROCM_PATH}
+    $ENV{HIP_PATH}
+  )
+
+  file(GLOB rocm_cmake_components ${TRITON_ROCM_HOME}/lib/cmake/*)
+  list(APPEND CMAKE_PREFIX_PATH ${rocm_cmake_components})
+
+  if(NOT DEFINED CMAKE_HIP_COMPILER)
+    set(CMAKE_HIP_COMPILER "${TRITON_ROCM_HOME}/llvm/bin/clang++")
+  endif()
+
+  if(NOT DEFINED CMAKE_HIP_ARCHITECTURES)
+    set(CMAKE_HIP_ARCHITECTURES "gfx906;gfx908;gfx90a;gfx1030;gfx1100;gfx1101;gfx940;gfx941;gfx942" CACHE STRING "HIP architectures")
+  endif()
+
+  enable_language(HIP)
+  find_package(hip REQUIRED CONFIG PATHS ${TRITON_ROCM_HOME})
+
+  include_directories(
+    ${TRITON_ROCM_HOME}/include
+    ${TRITON_ROCM_HOME}/hip/include
+    ${HIP_INCLUDE_DIRS}
+  )
+  link_directories(
+    ${TRITON_ROCM_HOME}/lib
+    ${TRITON_ROCM_HOME}/hip/lib
+  )
+
+  add_compile_definitions(TRITON_ENABLE_ROCM __HIP_PLATFORM_AMD__)
+  set(HIP_PLATFORM "amd" CACHE STRING "HIP platform")
+
+  if(EXISTS "${TRITON_ROCM_HOME}/.info/version-dev")
+    file(READ "${TRITON_ROCM_HOME}/.info/version-dev" ROCM_VERSION_DEV_RAW)
+    string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)-.*$" ROCM_VERSION_DEV_MATCH ${ROCM_VERSION_DEV_RAW})
+    if(ROCM_VERSION_DEV_MATCH)
+      set(ROCM_VERSION_DEV_MAJOR ${CMAKE_MATCH_1})
+      set(ROCM_VERSION_DEV_MINOR ${CMAKE_MATCH_2})
+      set(ROCM_VERSION_DEV_PATCH ${CMAKE_MATCH_3})
+      set(ROCM_VERSION_DEV "${ROCM_VERSION_DEV_MAJOR}.${ROCM_VERSION_DEV_MINOR}.${ROCM_VERSION_DEV_PATCH}")
+      math(EXPR ROCM_VERSION_DEV_INT "(${ROCM_VERSION_DEV_MAJOR}*10000) + (${ROCM_VERSION_DEV_MINOR}*100) + ${ROCM_VERSION_DEV_PATCH}")
+    endif()
+  endif()
+
+  message(STATUS "ROCm support enabled")
+  message(STATUS "ROCm path: ${TRITON_ROCM_HOME}")
+  message(STATUS "HIP compiler: ${CMAKE_HIP_COMPILER}")
+  message(STATUS "HIP architectures: ${CMAKE_HIP_ARCHITECTURES}")
+  if(DEFINED ROCM_VERSION_DEV)
+    message(STATUS "ROCm version: ${ROCM_VERSION_DEV} (${ROCM_VERSION_DEV_INT})")
+  endif()
+endif()
+
+#
+# Alpaka Configuration
+#
+if(TRITON_ENABLE_ALPAKA)
+  if(NOT TRITON_ENABLE_ROCM)
+    message(FATAL_ERROR "TRITON_ENABLE_ALPAKA requires TRITON_ENABLE_ROCM")
+  endif()
+  find_package(alpaka REQUIRED HINTS /usr/local/lib/cmake/alpaka)
+  add_compile_definitions(TRITON_ENABLE_ALPAKA ALPAKA_ACC_GPU_HIP_ENABLED)
+  message(STATUS "Alpaka portability layer enabled (HIP backend)")
 endif()
 
 #
 # Dependencies
 #
-# FetchContent requires us to include the transitive closure of all
-# repos that we depend on so that we can override the tags.
-#
+# repo-backend enables CUDA unconditionally when TRITON_ENABLE_GPU=ON (its default).
+# Disable it since we are using ROCm/Alpaka instead.
+set(BUILD_TESTING OFF CACHE BOOL "Disable all testing" FORCE)
+set(TRITON_ENABLE_TESTS OFF CACHE BOOL "Disable Triton tests" FORCE)
+set(TRITON_ENABLE_EXAMPLES OFF CACHE BOOL "Disable examples" FORCE)
+set(TRITON_ENABLE_GPU OFF CACHE BOOL "Disable GPU support in repo-backend" FORCE)
+
 include(FetchContent)
 
 FetchContent_Declare(
@@ -97,7 +175,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(repo-common repo-core repo-backend)
 
-# 
+#
 # Traccc dependencies
 #
 find_package(covfie REQUIRED)
@@ -114,6 +192,27 @@ add_library(
   src/traccc.cc
 )
 
+# Force HIP compiler (clang++) for .cc files when ROCm is enabled,
+# since CMake doesn't recognize .cc as a HIP source by default.
+# Also explicitly propagate Triton include dirs to the HIP compiler,
+# as CMake does not always forward INTERFACE_INCLUDE_DIRECTORIES from
+# CXX targets to HIP-language source files.
+if(TRITON_ENABLE_ROCM)
+  set_source_files_properties(
+    src/traccc.cc
+    PROPERTIES LANGUAGE HIP
+  )
+  target_include_directories(
+    triton-traccc-backend
+    PRIVATE
+      $<TARGET_PROPERTY:triton-backend-utils,INTERFACE_INCLUDE_DIRECTORIES>
+      $<TARGET_PROPERTY:triton-core-backendapi,INTERFACE_INCLUDE_DIRECTORIES>
+      $<TARGET_PROPERTY:triton-core-serverapi,INTERFACE_INCLUDE_DIRECTORIES>
+      $<TARGET_PROPERTY:triton-core-serverstub,INTERFACE_INCLUDE_DIRECTORIES>
+      ${TRITON_ROCM_HOME}/hip/include
+  )
+endif()
+
 add_library(
   TraccBackend::triton-traccc-backend ALIAS triton-traccc-backend
 )
@@ -128,17 +227,12 @@ target_include_directories(
 target_compile_features(triton-traccc-backend PRIVATE cxx_std_${TRITON_MIN_CXX_STANDARD})
 target_compile_options(
   triton-traccc-backend PRIVATE
-  $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
-    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Werror
-    $<$<CONFIG:Release>:-O3 -march=native -mtune=native>
-    $<$<CONFIG:RelWithDebInfo>:-O2 -g>
-    $<$<CONFIG:Debug>:-O0 -g>>
-  $<$<CXX_COMPILER_ID:MSVC>:/Wall /D_WIN32_WINNT=0x0A00 /EHsc /Zc:preprocessor
-    $<$<CONFIG:Release>:/O2 /Ob2 /DNDEBUG>
-    $<$<CONFIG:RelWithDebInfo>:/O2 /Ob1 /Zi>
-    $<$<CONFIG:Debug>:/Od /Zi>>
+  $<$<AND:$<COMPILE_LANGUAGE:CXX,HIP>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>>:
+    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits -Werror>
+  $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:MSVC>>:/Wall /D_WIN32_WINNT=0x0A00 /EHsc /Zc:preprocessor>
 )
 
+# Base Triton libraries
 target_link_libraries(
   triton-traccc-backend
   PRIVATE
@@ -146,19 +240,41 @@ target_link_libraries(
     triton-core-backendapi  # from repo-core
     triton-core-serverstub  # from repo-core
     triton-backend-utils    # from repo-backend
-    # traccc deps
-    vecmem::core 
-    vecmem::cuda 
-    traccc::io 
+)
+
+# Traccc / VecMem libraries (common)
+target_link_libraries(
+  triton-traccc-backend
+  PRIVATE
+    vecmem::core
+    traccc::io
     traccc::performance
-    traccc::core 
-    traccc::device_common 
-    traccc::cuda
-    traccc::options 
+    traccc::core
+    traccc::device_common
+    traccc::alpaka
+    traccc::options
     detray::io
 )
 
-# must set algrebra puglin include array
+# ROCm/HIP runtime libraries
+if(TRITON_ENABLE_ROCM)
+  target_link_libraries(
+    triton-traccc-backend
+    PRIVATE
+      hip::host
+      hip::device
+      vecmem::hip
+      ${ROCM_PATH}/lib/libamdhip64.so
+  )
+
+  if(TRITON_ENABLE_ALPAKA)
+    target_link_libraries(triton-traccc-backend PRIVATE alpaka::alpaka)
+    target_include_directories(triton-traccc-backend PRIVATE
+      $<TARGET_PROPERTY:alpaka::alpaka,INTERFACE_INCLUDE_DIRECTORIES>)
+  endif()
+endif()
+
+# must set algebra plugin include array
 add_definitions(-DALGEBRA_PLUGINS_INCLUDE_ARRAY)
 
 if(WIN32)
@@ -180,61 +296,29 @@ endif()
 #
 # Install
 #
-include(GNUInstallDirs)
-set(INSTALL_CONFIGDIR ${CMAKE_INSTALL_LIBDIR}/cmake/TracccBackend)
-
-install(
-  TARGETS
-    triton-traccc-backend
-  EXPORT
-    triton-traccc-backend-targets
-  LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/backends/traccc
-  RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/backends/traccc
-)
-
-install(DIRECTORY ${CMAKE_INSTALL_PREFIX}/../../models
-        DESTINATION ${CMAKE_INSTALL_PREFIX}
-        USE_SOURCE_PERMISSIONS
-)
-
-install(
-  TARGETS
-    triton-traccc-backend
-  LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/../../models/traccc-gpu
-  RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/../../models/traccc-gpu
-)
-
-install(
-  EXPORT
-    triton-traccc-backend-targets
-  FILE
-    TracccBackendTargets.cmake
-  NAMESPACE
-    TracccBackend::
-  DESTINATION
-    ${INSTALL_CONFIGDIR}
-)
-
-include(CMakePackageConfigHelpers)
-configure_package_config_file(
-  ${CMAKE_CURRENT_LIST_DIR}/cmake/TracccBackendConfig.cmake.in
-  ${CMAKE_CURRENT_BINARY_DIR}/TracccBackendConfig.cmake
-  INSTALL_DESTINATION ${INSTALL_CONFIGDIR}
-)
-
-install(
-  FILES
-  ${CMAKE_CURRENT_BINARY_DIR}/TracccBackendConfig.cmake
-  DESTINATION ${INSTALL_CONFIGDIR}
-)
-
+# cmake's generation-time check fires on imported targets' INTERFACE_INCLUDE_DIRECTORIES
+# whenever any install(TARGETS/FILES <target-ref> ...) command exists — it evaluates the
+# install-tree view of transitive deps and looks for CMAKE_INSTALL_PREFIX/include.
+# Avoid the check entirely by using install(CODE ...) which runs cmake script at
+# install time without doing target-interface analysis.
+# The .so path is computed at configure time from the known output name.
 #
-# Export from build tree
-#
-export(
-  EXPORT triton-traccc-backend-targets
-  FILE ${CMAKE_CURRENT_BINARY_DIR}/TracccBackendTargets.cmake
-  NAMESPACE TracccBackend::
-)
+set(_SO "${CMAKE_CURRENT_BINARY_DIR}/libtriton_traccc.so")
+set(_DEST_BACKEND  "${CMAKE_INSTALL_PREFIX}/backends/traccc")
+# Anchor the model-repo destination to the source tree so it is independent
+# of CMAKE_INSTALL_PREFIX.  CMAKE_SOURCE_DIR == backend/traccc-gpu/, so
+# one level up is the project root that contains the models/ directory.
+set(_DEST_MODELS   "${CMAKE_SOURCE_DIR}/../models/traccc-gpu")
+set(_DEST_MODELDIR "${CMAKE_INSTALL_PREFIX}")
 
-export(PACKAGE TracccBackend)
+install(CODE "
+  file(MAKE_DIRECTORY \"${_DEST_BACKEND}\")
+  file(COPY \"${_SO}\" DESTINATION \"${_DEST_BACKEND}\")
+  file(MAKE_DIRECTORY \"${_DEST_MODELS}\")
+  file(COPY \"${_SO}\" DESTINATION \"${_DEST_MODELS}\")
+")
+
+# Copy the model repository into the install tree (plain DIRECTORY, no target refs)
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/../models"
+        DESTINATION "${_DEST_MODELDIR}"
+        USE_SOURCE_PERMISSIONS)

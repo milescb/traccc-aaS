@@ -1,5 +1,73 @@
 # Traccc as-a-Service
 
+```
+export HTTP_PROXY=http://np04-web-proxy.cern.ch:3128
+export HTTPS_PROXY=http://np04-web-proxy.cern.ch:3128
+export NO_PROXY=".cern.ch"
+export http_proxy=http://np04-web-proxy.cern.ch:3128
+export https_proxy=http://np04-web-proxy.cern.ch:3128
+export no_proxy=".cern.ch"
+```
+
+/eos/home-m/mcochran/images/traccc-aaS/tritonserver_alpaka.sif
+
+```
+apptainer run -B /eos/user/m/mcochran/:/eos/user/m/mcochran/ -B /scratch/:/scratch/ \
+    -B /eos/project/a/atlas-eftracking/GPU/ITk_data/:/eos/project/a/atlas-eftracking/GPU/ITk_data/ \
+    /scratch/medium/mcochran/tritonserver_alpaka.sif
+```
+
+ACTS wipes previous proxy calls so it cannot download 
+```
+grep -rl "env -i UV_NO_CACHE" /scratch/medium/mcochran/traccc_build/_deps/acts-build/ | \
+  xargs sed -i 's|--python 3\.13|--python /scratch/medium/mcochran/python313/bin/python3.13|g'
+
+grep -rl "env -i UV_NO_CACHE" /scratch/medium/mcochran/traccc_build/_deps/acts-build/ | \
+  xargs sed -i 's|env -i UV_NO_CACHE=1|env -i UV_NO_CACHE=1 HTTP_PROXY=http://np04-web-proxy.cern.ch:3128 HTTPS_PROXY=http://np04-web-proxy.cern.ch:3128 http_proxy=http://np04-web-proxy.cern.ch:3128 https_proxy=http://np04-web-proxy.cern.ch:3128 NO_PROXY=.cern.ch no_proxy=.cern.ch|g'
+```
+
+```
+cmake -S /scratch/medium/mcochran/traccc -B /scratch/medium/mcochran/traccc_build_latest -G "Unix Makefiles" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DTRACCC_BUILD_ALPAKA=ON \
+    -DTRACCC_BUILD_HIP=ON \
+    -DTRACCC_BUILD_EXAMPLES=ON \
+    -DTRACCC_USE_ROOT=FALSE \
+    -DCMAKE_CXX_COMPILER=/opt/rocm/lib/llvm/bin/clang++ \
+    -DCMAKE_HIP_COMPILER=/opt/rocm/lib/llvm/bin/clang++ \
+    -Dalpaka_ACC_GPU_HIP_ENABLE=ON \
+    -DCMAKE_PREFIX_PATH=/opt/rocm \
+    -Dalpaka_DISABLE_VENDOR_RNG=ON \
+    -DTRACCC_SETUP_ROCTHRUST=ON \
+    -DHIP_COMPILER=/opt/rocm/bin/hipcc \
+    -DHIP_CXX_COMPILER=/opt/rocm/bin/hipcc \
+    -DCMAKE_HIP_ARCHITECTURES=gfx1100 \
+    -DCMAKE_HIP_COMPILE_FEATURES=hip_std_20 \
+    -DTRACCC_SUPPORTED_DETECTORS="itk_detector" \
+    -DDETRAY_GENERATE_METADATA=itk_metadata
+
+
+
+cmake --build /scratch/medium/mcochran/traccc_build_latest -j 20
+cmake --install /scratch/medium/mcochran/traccc_build_latest \
+      --prefix /scratch/medium/mcochran/traccc_install_latest
+```
+
+      --prefix /eos/user/m/mcochran/traccc_shared_library/dev/install
+
+```
+/tmp/mcochran/traccc_install/bin/traccc_seq_example_alpaka \
+  --detector-file=/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/detray_detector_geometry.json \
+  --material-file=/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/detray_detector_material_maps.json \
+  --grid-file=/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/detray_detector_surface_grids.json \
+  --digitization-file=/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/ITk_digitization_config.json \
+  --read-bfield-from-file \
+  --bfield-file=/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/ITk_bfield.cvf \
+  --input-directory=/afs/cern.ch/user/m/mcochran/Tracking/traccc-aaS/test \
+  --input-events=1 \
+  --use-acts-geom-source=1
+```
+
 Main objective of this repo: run [traccc](https://github.com/acts-project/traccc/tree/main) 
 as-a-Service. Getting this working includes creating three main components:
 

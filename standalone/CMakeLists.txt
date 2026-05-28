@@ -9,6 +9,9 @@ set(CMAKE_HIP_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 
+# Shadow FindGTest so detray's leaked test dependency doesn't abort our build
+list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
 # find required traccc packages
 find_package(covfie REQUIRED)
 find_package(traccc REQUIRED)
