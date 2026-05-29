@@ -1,33 +1,60 @@
 # Traccc as-a-Service
 
+Main objective of this repo: run [traccc](https://github.com/acts-project/traccc/tree/main) 
+as-a-Service. Getting this working includes creating three main components:
+
+1. a shared library of `traccc` and writing a standalone version with the essential pieces of 
+   the code included
+2. a custom backend using the standalone version above to launch the Triton server
+3. a client to send data to the server
+
+**This branch serves an AMD-supported backend only**
+
+A minimal description of how to build a working version is detailed below. In each subdirectory of 
+this project, a README containing more information can be found. For instructions on running the 
+pipeline with an Athena client on `lxplus` and the CUDA version, consult 
+[this CodiMD page](https://codimd.web.cern.ch/1FcLmapORpeBtAVL_M6h4A?view). The last part of this 
+README describes the necessary steps for maintaining and updating `traccc-aaS` when a new release 
+of `traccc` is available. 
+
+## Obtaining the `ITk` geometry files
+
+You will need access to the `ITk` geometry files to run this repository, which can be found 
+at `/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/` on CERN's `lxplus` 
+computing cluster. Note that to access these, you must be a part of the e-group 
+`atlas-tdaq-phase2-EFTracking-developers`. If you are outside of ATLAS, please refer to the 
+`odd_legacy` branch to run the ODD version of the code.
+
+### Get the code
+
+Simply clone the repository with 
+
 ```
-export HTTP_PROXY=http://np04-web-proxy.cern.ch:3128
-export HTTPS_PROXY=http://np04-web-proxy.cern.ch:3128
-export NO_PROXY=".cern.ch"
-export http_proxy=http://np04-web-proxy.cern.ch:3128
-export https_proxy=http://np04-web-proxy.cern.ch:3128
-export no_proxy=".cern.ch"
+git clone --recurse-submodules git@github.com:milescb/traccc-aaS.git
+
+# checkout this branch
+cd traccc-aaS && git checkout amd-alpaka
 ```
 
-/eos/home-m/mcochran/images/traccc-aaS/tritonserver_alpaka.sif
+### Docker
+
+The easiest way to build the custom backend is with the docker at 
+`docker.io/milescb/triton-server:25.02-py3_gcc13.3_alpaka2.1.1`. Run this interactively with
 
 ```
-apptainer run -B /eos/user/m/mcochran/:/eos/user/m/mcochran/ -B /scratch/:/scratch/ \
-    -B /eos/project/a/atlas-eftracking/GPU/ITk_data/:/eos/project/a/atlas-eftracking/GPU/ITk_data/ \
-    /scratch/medium/mcochran/tritonserver_alpaka.sif
+shifterimg pull milescb/triton-server:25.02-py3_gcc13.3
+shifter --module=gpu --image=milescb/triton-server:25.02-py3_gcc13.3
 ```
 
-ACTS wipes previous proxy calls so it cannot download 
-```
-grep -rl "env -i UV_NO_CACHE" /scratch/medium/mcochran/traccc_build/_deps/acts-build/ | \
-  xargs sed -i 's|--python 3\.13|--python /scratch/medium/mcochran/python313/bin/python3.13|g'
+or use your favorite docker application and mount the appropriate directories. 
 
-grep -rl "env -i UV_NO_CACHE" /scratch/medium/mcochran/traccc_build/_deps/acts-build/ | \
-  xargs sed -i 's|env -i UV_NO_CACHE=1|env -i UV_NO_CACHE=1 HTTP_PROXY=http://np04-web-proxy.cern.ch:3128 HTTPS_PROXY=http://np04-web-proxy.cern.ch:3128 http_proxy=http://np04-web-proxy.cern.ch:3128 https_proxy=http://np04-web-proxy.cern.ch:3128 NO_PROXY=.cern.ch no_proxy=.cern.ch|g'
-```
+### Building from source
+
+Follow the instructions on the [traccc page](https://github.com/acts-project/traccc/tree/main) to 
+build, or run this configure command for AMD support:
 
 ```
-cmake -S /scratch/medium/mcochran/traccc -B /scratch/medium/mcochran/traccc_build_latest -G "Unix Makefiles" \
+cmake -S <path_to_traccc> -B <build_dir> -G "Unix Makefiles" \
     -DCMAKE_BUILD_TYPE=Release \
     -DTRACCC_BUILD_ALPAKA=ON \
     -DTRACCC_BUILD_HIP=ON \
@@ -48,132 +75,27 @@ cmake -S /scratch/medium/mcochran/traccc -B /scratch/medium/mcochran/traccc_buil
 
 
 
-cmake --build /scratch/medium/mcochran/traccc_build_latest -j 20
-cmake --install /scratch/medium/mcochran/traccc_build_latest \
-      --prefix /scratch/medium/mcochran/traccc_install_latest
+cmake --build <build_dir> -j 20
+cmake --install <install_dir> 
 ```
 
-      --prefix /eos/user/m/mcochran/traccc_shared_library/dev/install
+Once this is built, set the following environement variables:
 
 ```
-/tmp/mcochran/traccc_install/bin/traccc_seq_example_alpaka \
-  --detector-file=/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/detray_detector_geometry.json \
-  --material-file=/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/detray_detector_material_maps.json \
-  --grid-file=/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/detray_detector_surface_grids.json \
-  --digitization-file=/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/ITk_digitization_config.json \
-  --read-bfield-from-file \
-  --bfield-file=/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/ITk_bfield.cvf \
-  --input-directory=/afs/cern.ch/user/m/mcochran/Tracking/traccc-aaS/test \
-  --input-events=1 \
-  --use-acts-geom-source=1
-```
-
-Main objective of this repo: run [traccc](https://github.com/acts-project/traccc/tree/main) 
-as-a-Service. Getting this working includes creating three main components:
-
-1. a shared library of `traccc` and writing a standalone version with the essential pieces of 
-   the code included
-2. a custom backend using the standalone version above to launch the Triton server
-3. a client to send data to the server
-
-A minimal description of how to build a working version is detailed below. In each subdirectory of 
-this project, a README containing more information can be found. For instructions on running the 
-pipeline with an Athena client on `lxplus`, consult 
-[this CodiMD page](https://codimd.web.cern.ch/1FcLmapORpeBtAVL_M6h4A?view). The last part of this 
-README describes the necessary steps for maintaining and updating `traccc-aaS` when a new release 
-of `traccc` is available. 
-
-## Obtaining the `ITk` geometry files
-
-You will need access to the `ITk` geometry files to run this repository, which can be found 
-at `/eos/project/a/atlas-eftracking/GPU/ITk_data/ATLAS-P2-RUN4-03-00-01/` on CERN's `lxplus` 
-computing cluster. Note that to access these, you must be a part of the e-group 
-`atlas-tdaq-phase2-EFTracking-developers`. If you are outside of ATLAS, please refer to the 
-`odd_legacy` branch to run the ODD version of the code.
-
-## Running out of the box
-
-The easiest way to run `traccc` as-a-Service is with our container. Pull the image at 
-`docker.io/milescb/traccc-aas:v1.4_traccc1.0.0` and run the image interactively. To do this, 
-you need access to the ITk geometry files, obtained by following the above instructions, and these 
-need to be mounted to `/traccc/itk-geometry`. 
-
-Then, server can be launched with:
-
-```
-tritonserver --model-repository=$MODEL_REPO
-```
-
-To test this with the client, open another window in the docker (using tmux, for instance), then run:
-
-```
-cd traccc-aas/client
-python TracccTritonClient.py
-```
-
-### Get the code
-
-Simply clone the repository with 
-
-```
-git clone --recurse-submodules git@github.com:milescb/traccc-aaS.git
-
-# checkout this branch
-cd traccc-aaS && git checkout itk-hits-to-tracks
-```
-
-### Docker
-
-The easiest way to build the custom backend is with the docker at 
-`docker.io/milescb/triton-server:25.02-py3_gcc13.3`. Run this interactively with
-
-```
-shifterimg pull milescb/triton-server:25.02-py3_gcc13.3
-shifter --module=gpu --image=milescb/triton-server:25.02-py3_gcc13.3
-```
-
-or use your favorite docker application and mount the appropriate directories. 
-
-### Shared Library on `nersc`
-
-To run out of the box at `nersc`, an installation of `traccc` and the the backend can be found at 
-`/global/cfs/projectdirs/m3443/data/traccc-aaS/prod/ver_082625_g200/install`. To set up the 
-environment, enter the image, then set the following environment variables
-
-```
-export DATADIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/data
-export INSTALLDIR=/global/cfs/projectdirs/m3443/data/traccc-aaS/prod/ver_082625_g200/install
+export INSTALLDIR=<install_dir>
 export PATH=$INSTALLDIR/bin:$PATH
 export LD_LIBRARY_PATH=$INSTALLDIR/lib:$LD_LIBRARY_PATH
 ```
 
-Then, the server can be launched with 
+Note: if building on the ATLAS EF testbed, you will need to set the following environment variables:
 
 ```
-tritonserver --model-repository=$INSTALLDIR/models
-```
-
-Once the server is launched, run the model (on the same node to avoid networking problems) via:
-
-```
-cd client && python TracccTritionClient.py 
-```
-More info in the client directory. 
-
-### Building from source
-
-If you don't have access to `nersc`, you'll have to build `traccc` yourself. 
-Follow the instructions on the [traccc page](https://github.com/acts-project/traccc/tree/main) to 
-build or run this configure command:
-
-```
-cmake <path_to_cmake> \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DTRACCC_BUILD_CUDA=ON \
-    -DTRACCC_BUILD_EXAMPLES=ON \
-    -DTRACCC_USE_ROOT=FALSE \
-    -DCMAKE_INSTALL_PREFIX=$INSTALLDIR
-make -j20 install
+export HTTP_PROXY=http://np04-web-proxy.cern.ch:3128
+export HTTPS_PROXY=http://np04-web-proxy.cern.ch:3128
+export NO_PROXY=".cern.ch"
+export http_proxy=http://np04-web-proxy.cern.ch:3128
+export https_proxy=http://np04-web-proxy.cern.ch:3128
+export no_proxy=".cern.ch"
 ```
 
 ## Building the backend
@@ -195,80 +117,13 @@ The server can then be launched as above:
 tritonserver --model-repository=../../models
 ```
 
-## Deploy on K8s cluster using SuperSONIC
+## Running the simple `python` client
 
-For server-side large-scale deployment we are using the 
-[SuperSONIC](https://github.com/fastmachinelearning/SuperSONIC) framework. 
-
-
-### To deploy the server on NRP Nautilus
+To test the server, the python client can be used. In the above docker image, run:
 
 ```
-source deploy-nautilus-atlas.sh
+python TracccTritonClient.py
 ```
-
-The settings are defined in `helm/values-nautilus-atlas.yaml` files. 
-You can update the setting simply by sourcing the deployment script again. 
- 
-You can find the server URL in the same configs. It will take a few seconds to start a server, 
-depending on the specs of the GPUs requested.
-
-### Running the client
-
-In order for the client to interface with the server, the location of the server needs to be 
-specified. First, ensure the server is running
-
-```
-kubectl get pods -n atlas-sonic
-```
-which has output something like:
-
-```
-NAME                            READY   STATUS    RESTARTS   AGE
-envoy-atlas-7f6d99df88-667jd    1/1     Running   0          86m
-triton-atlas-594f595dbf-n4sk7   1/1     Running   0          86m
-```
-
-or, use the [k9s](https://k9scli.io) tool to manage your pods. You can then check everything 
-is healthy with
-
-```
-curl -kv https://atlas.nrp-nautilus.io/v2/health/ready
-```
-
-which should produce somewhere in the output the lines:
-
-```
-< HTTP/1.1 200 OK
-< Content-Length: 0
-< Content-Type: text/plain
-```
-
-Then, the client can be run with, for instance:
-
-```
-python TracccTritonClient.py -u atlas.nrp-nautilus.io --ssl
-```
-
-To see what's going on from the server side, run
-
-```
-kubectl logs triton-atlas-594f595dbf-n4sk7
-```
-
-where `triton-atlas-594f595dbf-n4sk7` is the name of the server found when running the `get pods` 
-command above. 
-
-### !!! Important !!!
-
-Make sure to `uninstall` once the server is not needed anymore. 
-
-```
-helm uninstall atlas-sonic -n atlas-sonic
-```
-
-Make sure to read the [Policies](https://docs.nationalresearchplatform.org/userdocs/start/policies/) 
-before using Nautilus. 
 
 ## Code Maintenance
 
