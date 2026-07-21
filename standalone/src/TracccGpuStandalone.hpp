@@ -4,6 +4,8 @@
 #include <iostream>
 #include <memory>
 #include <chrono>
+#include <cstdint>
+#include <cstring>
 #include <unordered_map>
 
 // CUDA include(s).
@@ -374,6 +376,18 @@ public:
         size_t num_cells,
         bool athena_ids);
 
+    // Build a silicon_cell_collection directly from the raw client buffer.
+    // Byte layout (little-endian / native), 1-D of length 8 + 20*N:
+    //   offset 0        : uint64_t N              (cell count)
+    //   then 5 contiguous column blocks, each length N (SoA order):
+    //     channel0[N]     : uint32_t
+    //     channel1[N]     : uint32_t
+    //     activation[N]   : float32
+    //     time[N]         : float32
+    //     module_index[N] : uint32_t
+    traccc::edm::silicon_cell_collection::host cells_from_buffer(
+        const uint8_t* buffer, size_t byte_size);
+
     // getters
     const std::map<int64_t, uint64_t>& getAthenaToDetrayMap() const {
         return m_athena_to_detray_map;
@@ -386,6 +400,11 @@ public:
     void initialize();
 
     TracccResults run(std::vector<traccc::io::csv::cell> cells, bool show_stats = false);
+
+    // Run the reconstruction chain directly on an already-built cell collection
+    // (e.g. reconstructed from the raw client buffer via cells_from_buffer).
+    TracccResults run(traccc::edm::silicon_cell_collection::host cells,
+                      bool show_stats = false);
 
 };
 
@@ -468,11 +487,18 @@ TracccResults TracccGpuStandalone::run(
     read_cells(read_out, cells);
     if (show_stats) end_read = std::chrono::high_resolution_clock::now();
 
+    // Hand the built collection to the collection-based run overload.
+    return run(std::move(read_out), show_stats);
+}
+
+TracccResults TracccGpuStandalone::run(
+    traccc::edm::silicon_cell_collection::host cells, bool show_stats
+) {
     // Copy to device
     if (show_stats) start_copy_in = std::chrono::high_resolution_clock::now();
     traccc::edm::silicon_cell_collection::buffer cells_buffer(
-        static_cast<unsigned int>(read_out.size()), m_cached_device_mr);
-    m_copy(vecmem::get_data(read_out), cells_buffer)->ignore();
+        static_cast<unsigned int>(cells.size()), m_cached_device_mr);
+    m_copy(vecmem::get_data(cells), cells_buffer)->ignore();
     if (show_stats) end_copy_in = std::chrono::high_resolution_clock::now();
 
     // Clusterization
@@ -601,6 +627,56 @@ std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(
         cell.value = cell_properties[i * 2 + 1];
 
         cells.push_back(cell);
+    }
+
+    return cells;
+}
+
+traccc::edm::silicon_cell_collection::host
+    TracccGpuStandalone::cells_from_buffer(const uint8_t* buffer, size_t byte_size)
+{
+    traccc::edm::silicon_cell_collection::host cells(m_host_mr);
+
+    // Need at least the 8-byte header carrying the cell count.
+    if (buffer == nullptr || byte_size < sizeof(std::uint64_t)) {
+        throw std::runtime_error(
+            "CELLS buffer is too small to contain the cell count header");
+    }
+
+    // Read N with memcpy to avoid an unaligned 8-byte load.
+    std::uint64_t num_cells = 0;
+    std::memcpy(&num_cells, buffer, sizeof(std::uint64_t));
+
+    // Validate the declared layout: 8-byte header + 5 column blocks of N.
+    //   channel0/channel1/module_index : uint32 (4 bytes)
+    //   activation/time                : float32 (4 bytes)
+    const size_t expected_size =
+        sizeof(std::uint64_t) + static_cast<size_t>(num_cells) * 20u;
+    if (byte_size != expected_size) {
+        throw std::runtime_error(
+            "CELLS buffer size mismatch: expected " +
+            std::to_string(expected_size) + " bytes for N=" +
+            std::to_string(num_cells) + ", got " + std::to_string(byte_size));
+    }
+
+    // Column-block base offsets (SoA order). All are 4-byte aligned since the
+    // header is 8 bytes and every block is 4*N bytes long.
+    const uint8_t* base = buffer + sizeof(std::uint64_t);
+    const std::uint32_t* channel0 =
+        reinterpret_cast<const std::uint32_t*>(base + 0u * num_cells * 4u);
+    const std::uint32_t* channel1 =
+        reinterpret_cast<const std::uint32_t*>(base + 1u * num_cells * 4u);
+    const float* activation =
+        reinterpret_cast<const float*>(base + 2u * num_cells * 4u);
+    const float* time =
+        reinterpret_cast<const float*>(base + 3u * num_cells * 4u);
+    const std::uint32_t* module_index =
+        reinterpret_cast<const std::uint32_t*>(base + 4u * num_cells * 4u);
+
+    cells.reserve(static_cast<std::size_t>(num_cells));
+    for (std::uint64_t i = 0; i < num_cells; ++i) {
+        cells.push_back({channel0[i], channel1[i], activation[i],
+                         time[i], module_index[i]});
     }
 
     return cells;

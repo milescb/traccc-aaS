@@ -1,15 +1,10 @@
 backend: "traccc"
 max_batch_size: 0
 input [
-   {
-    name: "CELL_POSITIONS"
-    data_type: TYPE_INT64
-    dims: [ -1, 4 ]
-  },
   {
-    name: "CELL_PROPERTIES"
-    data_type: TYPE_FP32
-    dims: [ -1, 2 ]
+    name: "CELLS"
+    data_type: TYPE_UINT8
+    dims: [ -1 ]
   }
 ]
 output [

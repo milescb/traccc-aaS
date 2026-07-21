@@ -163,13 +163,11 @@ class ModelState : public BackendModel {
   virtual ~ModelState() = default;
 
     // Name of the input and output tensor
-    const std::string &InputCellPositionsTensorName() const { return input_cell_positions_name_; }
-    const std::string &InputCellPropertiesTensorName() const { return input_cell_properties_name_; }
+    const std::string &InputCellsTensorName() const { return input_cells_name_; }
     const std::string &OutputTensorName() const { return output_name_; }
 
     // Datatype of the input and output tensor
-    TRITONSERVER_DataType InputCellPositionsTensorDataType() const { return input_cell_positions_datatype_; }
-    TRITONSERVER_DataType InputCellPropertiesTensorDataType() const { return input_cell_properties_datatype_; }
+    TRITONSERVER_DataType InputCellsTensorDataType() const { return input_cells_datatype_; }
     TRITONSERVER_DataType OutputTensorDataType() const
     {
         return output_datatype_;
@@ -186,13 +184,9 @@ class ModelState : public BackendModel {
     // until the model is completely loaded and initialized, including
     // all instances of the model. In practice, this means that backend
     // should only call it in TRITONBACKEND_ModelInstanceExecute.
-    const std::vector<int64_t> &InputCellPositionsTensorNonBatchShape() const
+    const std::vector<int64_t> &InputCellsTensorNonBatchShape() const
     {
-        return input_cell_positions_nb_shape_;
-    }
-    const std::vector<int64_t> &InputCellPropertiesTensorNonBatchShape() const
-    {
-        return input_cell_properties_nb_shape_;
+        return input_cells_nb_shape_;
     }
     const std::vector<int64_t> &OutputTensorNonBatchShape() const
     {
@@ -208,18 +202,14 @@ class ModelState : public BackendModel {
  private:
   ModelState(TRITONBACKEND_Model* triton_model);
 
-    std::string input_cell_positions_name_;
-    std::string input_cell_properties_name_;
+    std::string input_cells_name_;
     std::string output_name_;
 
-    TRITONSERVER_DataType input_cell_positions_datatype_;
-    TRITONSERVER_DataType input_cell_properties_datatype_;
+    TRITONSERVER_DataType input_cells_datatype_;
     TRITONSERVER_DataType output_datatype_;
 
-    std::vector<int64_t> input_cell_positions_nb_shape_;
-    std::vector<int64_t> input_cell_properties_nb_shape_;
-    std::vector<int64_t> input_cell_positions_shape_;
-    std::vector<int64_t> input_cell_properties_shape_;
+    std::vector<int64_t> input_cells_nb_shape_;
+    std::vector<int64_t> input_cells_shape_;
     std::vector<int64_t> output_nb_shape_;
     std::vector<int64_t> output_shape_;
 
@@ -271,26 +261,23 @@ ModelState::ValidateModelConfig()
     RETURN_IF_ERROR(ModelConfig().MemberAsArray("input", &inputs));
     RETURN_IF_ERROR(ModelConfig().MemberAsArray("output", &outputs));
 
-    // The model must have exactly 2 inputs and 3 output.
+    // The model must have exactly 1 input and 4 outputs.
     RETURN_ERROR_IF_FALSE(
-        inputs.ArraySize() == 2, TRITONSERVER_ERROR_INVALID_ARG,
-        std::string("model configuration must have 2 inputs"));
+        inputs.ArraySize() == 1, TRITONSERVER_ERROR_INVALID_ARG,
+        std::string("model configuration must have 1 input"));
     RETURN_ERROR_IF_FALSE(
         outputs.ArraySize() == 4, TRITONSERVER_ERROR_INVALID_ARG,
         std::string("model configuration must have 4 outputs"));
 
-    common::TritonJson::Value input_cell_positions, input_cell_properties, output;
-    RETURN_IF_ERROR(inputs.IndexAsObject(0, &input_cell_positions));
-    RETURN_IF_ERROR(inputs.IndexAsObject(1, &input_cell_properties));
+    common::TritonJson::Value input_cells, output;
+    RETURN_IF_ERROR(inputs.IndexAsObject(0, &input_cells));
     RETURN_IF_ERROR(outputs.IndexAsObject(0, &output));
 
     // Record the input and output name in the model state.
-    const char *input_cell_positions_name, *input_cell_properties_name;
-    size_t input_cell_positions_len, input_cell_properties_len;
-    RETURN_IF_ERROR(input_cell_positions.MemberAsString("name", &input_cell_positions_name, &input_cell_positions_len));
-    RETURN_IF_ERROR(input_cell_properties.MemberAsString("name", &input_cell_properties_name, &input_cell_properties_len));
-    input_cell_positions_name_ = std::string(input_cell_positions_name);
-    input_cell_properties_name_ = std::string(input_cell_properties_name);
+    const char *input_cells_name;
+    size_t input_cells_len;
+    RETURN_IF_ERROR(input_cells.MemberAsString("name", &input_cells_name, &input_cells_len));
+    input_cells_name_ = std::string(input_cells_name);
 
     const char *output_name;
     size_t output_name_len;
@@ -298,26 +285,17 @@ ModelState::ValidateModelConfig()
         output.MemberAsString("name", &output_name, &output_name_len));
     output_name_ = std::string(output_name);
 
-    // Input and output must have same datatype
-    std::string input_cell_positions_dtype, input_cell_properties_dtype, output_dtype;
-    RETURN_IF_ERROR(input_cell_positions.MemberAsString("data_type", &input_cell_positions_dtype));
-    RETURN_IF_ERROR(input_cell_properties.MemberAsString("data_type", &input_cell_properties_dtype));
+    std::string input_cells_dtype, output_dtype;
+    RETURN_IF_ERROR(input_cells.MemberAsString("data_type", &input_cells_dtype));
     RETURN_IF_ERROR(output.MemberAsString("data_type", &output_dtype));
-    // RETURN_ERROR_IF_FALSE(
-    //     input_dtype == output_dtype, TRITONSERVER_ERROR_INVALID_ARG,
-    //     std::string("expected input and output datatype to match, got ") +
-    //         input_dtype + " and " + output_dtype);
-    input_cell_positions_datatype_ = ModelConfigDataTypeToTritonServerDataType(input_cell_positions_dtype);
-    input_cell_properties_datatype_ = ModelConfigDataTypeToTritonServerDataType(input_cell_properties_dtype);
+    input_cells_datatype_ = ModelConfigDataTypeToTritonServerDataType(input_cells_dtype);
     output_datatype_ = ModelConfigDataTypeToTritonServerDataType(output_dtype);
 
-    std::vector<int64_t> input_cell_positions_shape, input_cell_properties_shape, output_shape;
-    RETURN_IF_ERROR(backend::ParseShape(input_cell_positions, "dims", &input_cell_positions_shape));
-    RETURN_IF_ERROR(backend::ParseShape(input_cell_properties, "dims", &input_cell_properties_shape));
+    std::vector<int64_t> input_cells_shape, output_shape;
+    RETURN_IF_ERROR(backend::ParseShape(input_cells, "dims", &input_cells_shape));
     RETURN_IF_ERROR(backend::ParseShape(output, "dims", &output_shape));
 
-    input_cell_positions_nb_shape_ = input_cell_positions_shape;
-    input_cell_properties_nb_shape_ = input_cell_properties_shape;
+    input_cells_nb_shape_ = input_cells_shape;
     output_nb_shape_ = output_shape;
 
     return nullptr; // success
@@ -603,26 +581,18 @@ TRITONBACKEND_ModelInstanceExecute(
     std::vector<std::pair<TRITONSERVER_MemoryType, int64_t>> allowed_input_types =
         {{TRITONSERVER_MEMORY_CPU_PINNED, 0}, {TRITONSERVER_MEMORY_CPU, 0}};
 
-    const char *input_cell_positions_buffer, *input_cell_properties_buffer;
-    size_t input_cell_positions_buffer_byte_size, input_cell_properties_buffer_byte_size;
-    TRITONSERVER_MemoryType input_cell_positions_buffer_memory_type, input_cell_properties_buffer_memory_type;
-    int64_t input_cell_positions_buffer_memory_type_id, input_cell_properties_buffer_memory_type_id;
+    const char *input_cells_buffer;
+    size_t input_cells_buffer_byte_size;
+    TRITONSERVER_MemoryType input_cells_buffer_memory_type;
+    int64_t input_cells_buffer_memory_type_id;
 
     RESPOND_ALL_AND_SET_NULL_IF_ERROR(
         responses, request_count,
         collector.ProcessTensor(
-            model_state->InputCellPositionsTensorName().c_str(), nullptr /* existing_buffer */,
-            0 /* existing_buffer_byte_size */, allowed_input_types, &input_cell_positions_buffer,
-            &input_cell_positions_buffer_byte_size, &input_cell_positions_buffer_memory_type,
-            &input_cell_positions_buffer_memory_type_id));
-
-    RESPOND_ALL_AND_SET_NULL_IF_ERROR(
-        responses, request_count,
-        collector.ProcessTensor(
-            model_state->InputCellPropertiesTensorName().c_str(), nullptr /* existing_buffer */,
-            0 /* existing_buffer_byte_size */, allowed_input_types, &input_cell_properties_buffer,
-            &input_cell_properties_buffer_byte_size, &input_cell_properties_buffer_memory_type,
-            &input_cell_properties_buffer_memory_type_id));
+            model_state->InputCellsTensorName().c_str(), nullptr /* existing_buffer */,
+            0 /* existing_buffer_byte_size */, allowed_input_types, &input_cells_buffer,
+            &input_cells_buffer_byte_size, &input_cells_buffer_memory_type,
+            &input_cells_buffer_memory_type_id));
 
     // Finalize the collector. If 'true' is returned, 'input_buffer'
     // will not be valid until the backend synchronizes the CUDA
@@ -648,37 +618,16 @@ TRITONBACKEND_ModelInstanceExecute(
 
     auto input_proc_start = std::chrono::high_resolution_clock::now();
 
-    // Determine the number of objects in the input buffer
-    size_t num_cells = input_cell_positions_buffer_byte_size / (sizeof(std::int64_t) * 4);
-    size_t num_props = input_cell_properties_buffer_byte_size / (sizeof(float) * 2);
+    // Reconstruct the silicon_cell_collection directly from the raw client
+    // buffer (single UINT8 tensor, layout: uint64 N followed by the SoA column
+    // blocks channel0/channel1/activation/time/module_index).
+    traccc::edm::silicon_cell_collection::host cells =
+        instance_state->traccc_gpu_standalone_->cells_from_buffer(
+            reinterpret_cast<const uint8_t *>(input_cells_buffer),
+            input_cells_buffer_byte_size);
 
-    // convert to expected types
-    const std::int64_t *cell_positions_ptr = 
-        reinterpret_cast<const std::int64_t *>(input_cell_positions_buffer);
-    const float *cell_properties_ptr = 
-        reinterpret_cast<const float *>(input_cell_properties_buffer);
+    std::cout << "Number of cells received: " << cells.size() << std::endl;
 
-    if (num_cells != num_props) {
-        LOG_MESSAGE(TRITONSERVER_LOG_ERROR, 
-            "Mismatch between number of cell positions and cell properties.");
-    }
-
-    std::cout << "Number of cells received: " << num_cells  << std::endl;
-    // for (size_t i = 0; i < 5 && i < num_cells; ++i) {
-    //     std::cout << "Cell " << i << ": ";
-    //     std::cout << "pos=[";
-    //     std::cout << cell_positions_ptr[i * 4] << ", ";
-    //     std::cout << cell_positions_ptr[i * 4 + 1] << ", ";
-    //     std::cout << cell_positions_ptr[i * 4 + 2] << ", ";
-    //     std::cout << cell_positions_ptr[i * 4 + 3] << "], props=[";
-    //     std::cout << cell_properties_ptr[i * 2] << ", ";
-    //     std::cout << cell_properties_ptr[i * 2 + 1] << "]" << std::endl;
-    // }
-
-    // Read measurements into traccc 
-    std::vector<traccc::io::csv::cell> cells = instance_state->traccc_gpu_standalone_->read_from_array(
-        cell_positions_ptr, cell_properties_ptr, num_cells, true);
-    
     auto input_proc_end = std::chrono::high_resolution_clock::now();
     std::cout << "[TIMING] Input processing: "
               << std::chrono::duration_cast<std::chrono::milliseconds>(input_proc_end - input_proc_start).count()
@@ -686,7 +635,7 @@ TRITONBACKEND_ModelInstanceExecute(
 
     // run the reco chain
     bool print_stats = false;
-    auto traccc_result = instance_state->traccc_gpu_standalone_->run(cells, print_stats);
+    auto traccc_result = instance_state->traccc_gpu_standalone_->run(std::move(cells), print_stats);
 
     auto output_proc_start = std::chrono::high_resolution_clock::now();
 
