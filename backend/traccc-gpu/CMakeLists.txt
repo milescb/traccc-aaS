@@ -103,6 +103,12 @@ FetchContent_MakeAvailable(repo-common repo-core repo-backend)
 find_package(covfie REQUIRED)
 find_package(traccc REQUIRED)
 
+# Work around an upstream ACTS packaging bug. 
+if(TARGET Eigen3::Eigen)
+  set_target_properties(Eigen3::Eigen PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${traccc_INCLUDE_DIR}/eigen3")
+endif()
+
 #
 # The backend must be built into a shared library. Use an ldscript to
 # hide all symbols except for the TRITONBACKEND API.
@@ -152,9 +158,10 @@ target_link_libraries(
     traccc::io 
     traccc::performance
     traccc::core 
-    traccc::device_common 
+    traccc::device_common
     traccc::cuda
-    traccc::options 
+    traccc::cuda_utils
+    traccc::options
     detray::io
 )
 
