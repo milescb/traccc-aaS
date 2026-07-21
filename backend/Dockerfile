@@ -4,7 +4,7 @@ FROM docker.io/milescb/triton-server:25.02-py3_gcc13.3
 WORKDIR /traccc
 RUN mkdir build install itk-geometry
 RUN git clone https://github.com/acts-project/traccc.git 
-RUN cd traccc && git checkout e49d353a
+RUN cd traccc && git checkout v1.6.0
 WORKDIR /traccc/build
 RUN cmake -DCMAKE_INSTALL_PREFIX=../install ../traccc \
         -DCMAKE_BUILD_TYPE=Release \
