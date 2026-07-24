@@ -607,15 +607,6 @@ TRITONBACKEND_ModelInstanceExecute(
             "'Traccc' backend: unexpected CUDA sync required by collector");
     }
 
-    // 'input_buffer' contains the batched input tensor. The backend can
-    // implement whatever logic is necessary to produce the output
-    // tensor. This backend simply logs the input tensor value and then
-    // returns the input tensor value in the output tensor so no actual
-    // computation is needed.
-
-    uint64_t compute_start_ns = 0;
-    SET_TIMESTAMP(compute_start_ns);
-
     auto input_proc_start = std::chrono::high_resolution_clock::now();
 
     // Reconstruct the silicon_cell_collection directly from the raw client
@@ -626,18 +617,36 @@ TRITONBACKEND_ModelInstanceExecute(
             reinterpret_cast<const uint8_t *>(input_cells_buffer),
             input_cells_buffer_byte_size);
 
-    std::cout << "Number of cells received: " << cells.size() << std::endl;
+    bool print_stats = false;
 
-    auto input_proc_end = std::chrono::high_resolution_clock::now();
-    std::cout << "[TIMING] Input processing: "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(input_proc_end - input_proc_start).count()
-              << " ms" << std::endl;
+    auto input_proc_end = input_proc_start;
+    if (print_stats)
+    {
+        std::cout << "DEBUG: Number of cells received: " << cells.size() << std::endl;
+
+        input_proc_end = std::chrono::high_resolution_clock::now();
+        std::cout << "[TIMING] Cell buffer re-creation "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(
+                            input_proc_end - input_proc_start).count()
+                << " ms" << std::endl;
+    }
 
     // run the reco chain
-    bool print_stats = false;
+    uint64_t compute_start_ns = 0;
+    SET_TIMESTAMP(compute_start_ns);
+
     auto traccc_result = instance_state->traccc_gpu_standalone_->run(std::move(cells), print_stats);
 
-    auto output_proc_start = std::chrono::high_resolution_clock::now();
+    auto output_proc_start = input_proc_end;
+    if (print_stats)
+    {
+        output_proc_start = std::chrono::high_resolution_clock::now();
+
+        std::cout << "[TIMING] Inference time "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(
+                        output_proc_start - input_proc_end).count ()
+                << " ms" << std::endl;
+    }
 
     uint64_t compute_end_ns = 0;
     SET_TIMESTAMP(compute_end_ns);
@@ -792,14 +801,17 @@ TRITONBACKEND_ModelInstanceExecute(
             ++included_tracks;
         }
 
-        // Log exclusion statistics
-        LOG_MESSAGE(TRITONSERVER_LOG_INFO,
-                    (std::string("Track Exclusion Summary - Total: ") + std::to_string(num_tracks) +
-                     ", Excluded (non-positive NDF): " + std::to_string(excluded_non_positive_ndf) +
-                     ", Excluded (not all smoothed): " + std::to_string(excluded_not_all_smoothed) +
-                     ", Excluded (unknown): " + std::to_string(excluded_unknown) +
-                     ", Excluded (no state): " + std::to_string(excluded_no_state) +
-                     ", Included: " + std::to_string(included_tracks)).c_str());
+        if (print_stats)
+        {
+            // Log exclusion statistics
+            LOG_MESSAGE(TRITONSERVER_LOG_INFO,
+                        (std::string("Track Exclusion Summary - Total: ") + std::to_string(num_tracks) +
+                        ", Excluded (non-positive NDF): " + std::to_string(excluded_non_positive_ndf) +
+                        ", Excluded (not all smoothed): " + std::to_string(excluded_not_all_smoothed) +
+                        ", Excluded (unknown): " + std::to_string(excluded_unknown) +
+                        ", Excluded (no state): " + std::to_string(excluded_no_state) +
+                        ", Included: " + std::to_string(included_tracks)).c_str());
+        }
 
         // --- Send 'TRK_PARAMS' tensor ---
         std::vector<int64_t> trk_params_shape = {static_cast<int64_t>(included_tracks), 8};
@@ -832,11 +844,14 @@ TRITONBACKEND_ModelInstanceExecute(
             TRITONSERVER_MEMORY_CPU, 0);
     }
 
-    auto output_proc_end = std::chrono::high_resolution_clock::now();
-    std::cout << "[TIMING] Output processing: "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(
-                    output_proc_end - output_proc_start).count()
-              << " ms" << std::endl;
+    if (print_stats)
+    {
+        auto output_proc_end = std::chrono::high_resolution_clock::now();
+        std::cout << "[TIMING] Output processing: "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(
+                        output_proc_end - output_proc_start).count()
+                << " ms" << std::endl;
+    }
 
     // Finalize the responder. If 'true' is returned, the output
     // tensors' data will not be valid until the backend synchronizes
