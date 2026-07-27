@@ -26,14 +26,14 @@ computing cluster. Note that to access these, you must be a part of the e-group
 ## Running out of the box
 
 The easiest way to run `traccc` as-a-Service is with our container. Pull the image at 
-`docker.io/milescb/traccc-aas:v1.4_traccc1.0.0` and run the image interactively. To do this, 
+`docker.io/milescb/traccc-aas:traccc_v1.6.0` and run the image interactively. To do this, 
 you need access to the ITk geometry files, obtained by following the above instructions, and these 
 need to be mounted to `/traccc/itk-geometry`. 
 
 Then, server can be launched with:
 
 ```
-tritonserver --model-repository=$MODEL_REPO
+tritonserver --model-repository=/traccc-aaS/traccc-aaS/backend/models/
 ```
 
 To test this with the client, open another window in the docker (using tmux, for instance), then run:
