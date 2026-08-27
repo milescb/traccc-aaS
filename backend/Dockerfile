@@ -21,9 +21,12 @@ ENV LD_LIBRARY_PATH=/traccc/install/lib:$LD_LIBRARY_PATH
 
 # install custom backend
 WORKDIR /traccc-aaS
-RUN git clone https://github.com/milescb/traccc-aaS.git && cd traccc-aaS/
+RUN git clone https://github.com/milescb/traccc-aaS.git && cd traccc-aaS/ \
+        && git checkout buffer-to-buffer-ODD
 
 RUN cd /traccc-aaS/traccc-aaS/backend/traccc-gpu && mkdir build install && cd build && \
     cmake -B . -S ../ -DCMAKE_INSTALL_PREFIX=../install -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CXX_FLAGS="-Wno-template-body" && \
     cmake --build . --target install -- -j20
+
+COPY odd_geo/ /traccc-geom/odd/

@@ -29,6 +29,12 @@ def plot_histogram(data, name, xlabel, bins=50, xlims=None, logy=False):
         plt.yscale('log')
     plt.savefig(f"plots/{name.replace(" ", "_")}.png")
 
+# The map is a static file shipped with the client, not with the event data,
+# so it lives next to this script rather than next to --filename.
+DEFAULT_GEOM_MAP = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "geom_id_to_module_index.json"
+)
+
 def load_geom_id_map(path):
     """Load the geometry_id -> module_index map dumped once by the server
     (dump_geom_id_map in TracccGpuStandalone.cpp). This ordering comes from
@@ -215,12 +221,7 @@ def main():
 
     input_data = pd.read_csv(FLAGS.filename)
 
-    geom_map_path = FLAGS.geom_map
-    if geom_map_path is None:
-        geom_map_path = os.path.join(
-            os.path.dirname(os.path.abspath(FLAGS.filename)),
-            "geom_id_to_module_index.json",
-        )
+    geom_map_path = FLAGS.geom_map or DEFAULT_GEOM_MAP
     geom_id_map = load_geom_id_map(geom_map_path)
 
     cell_buffer = build_cell_buffer(input_data, geom_id_map)
@@ -330,7 +331,7 @@ if __name__ == "__main__":
         default=None,
         help="Path to the geom_id_to_module_index.json file dumped by the "
              "server (TracccGpuStandalone::dump_geom_id_map). Default is "
-             "geom_id_to_module_index.json next to --filename.",
+             "geom_id_to_module_index.json next to this script.",
     )
     FLAGS = parser.parse_args()
 

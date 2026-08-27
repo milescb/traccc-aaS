@@ -289,7 +289,7 @@ public:
         vecmem::host_memory_resource* host_mr,
         vecmem::cuda::device_memory_resource* device_mr,
         int deviceID = 0,
-        const std::string& geoDir = "/global/homes/m/milescb/tracking/traccc-aaS-gpu/traccc/data/geometries/odd/") :
+        const std::string& geoDir = "/traccc-geom/odd/") :
             m_device_id(deviceID), 
             m_geoDir(geoDir),
             logger(traccc::getDefaultLogger("TracccGpuStandalone", traccc::Logging::Level::INFO)),
