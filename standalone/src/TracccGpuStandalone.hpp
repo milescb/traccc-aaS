@@ -289,7 +289,7 @@ public:
         vecmem::host_memory_resource* host_mr,
         vecmem::cuda::device_memory_resource* device_mr,
         int deviceID = 0,
-        const std::string& geoDir = "/traccc/itk-geometry/") :
+        const std::string& geoDir = "/global/homes/m/milescb/tracking/traccc-aaS-gpu/traccc/data/geometries/odd/") :
             m_device_id(deviceID), 
             m_geoDir(geoDir),
             logger(traccc::getDefaultLogger("TracccGpuStandalone", traccc::Logging::Level::INFO)),
@@ -306,7 +306,7 @@ public:
             m_grid_config(m_finder_config),
             m_filter_config(create_and_setup_filter_config()),
             m_finding_config(create_and_setup_finding_config()),
-            m_host_field(make_magnetic_field(geoDir + "ITk_bfield.cvf")),
+            m_host_field(make_magnetic_field(geoDir + "odd-bfield.cvf")),
             m_field(traccc::cuda::make_magnetic_field(m_host_field)),
             m_field_vec({0.f, 0.f, m_finder_config.bFieldInZ}),
             m_det_descr_storage(m_host_mr),
@@ -369,11 +369,11 @@ public:
 void TracccGpuStandalone::initialize()
 {
     // HACK: hard code location of detector and digitization file
-    m_detector_opts.detector_file = m_geoDir + "/detray_detector_geometry.json";
-    m_detector_opts.digitization_file = m_geoDir + "/ITk_digitization_config.json";
-    m_detector_opts.grid_file = m_geoDir + "/detray_detector_surface_grids.json";
-    m_detector_opts.material_file = m_geoDir + "/detray_detector_material_maps.json";
-    m_detector_opts.conditions_file = m_geoDir + "/ITk_digitization_config.json";
+    m_detector_opts.detector_file = m_geoDir + "/odd-detray_geometry_detray.json";
+    m_detector_opts.digitization_file = m_geoDir + "/odd-digi-geometric-config.json";
+    m_detector_opts.grid_file = m_geoDir + "/odd-detray_surface_grids_detray.json";
+    m_detector_opts.material_file = m_geoDir + "/odd-detray_material_detray.json";
+    m_detector_opts.conditions_file = m_geoDir + "/odd-digi-geometric-config.json";
 
     traccc::io::read_detector_description(
         m_det_descr_storage, m_det_cond_storage, m_detector_opts.detector_file,
@@ -403,11 +403,14 @@ void TracccGpuStandalone::initialize()
     m_copy(vecmem::get_data(m_det_cond_storage), m_device_det_cond)->wait();
     m_stream.synchronize();
 
-    // fill the module (conditions) index to geometry id map
+    // Fill the geometry id -> module (conditions) index map. The cell files
+    // carry ACTS geometry IDs, matching traccc's own CSV reader, which keys
+    // this map the same way with its default use_acts_geometry_id = true.
     m_geomIdMap.clear();
-    m_geomIdMap.reserve(m_det_cond_storage.geometry_id().size());
-    for (unsigned int i = 0; i < m_det_cond_storage.geometry_id().size(); ++i) {
-        m_geomIdMap[m_det_cond_storage.geometry_id()[i].value()] = i;
+    m_geomIdMap.reserve(m_det_cond_storage.acts_geometry_id().size());
+    for (unsigned int i = 0; i < m_det_cond_storage.acts_geometry_id().size();
+         ++i) {
+        m_geomIdMap[m_det_cond_storage.acts_geometry_id()[i]] = i;
     }
 
     traccc::io::read_detector(

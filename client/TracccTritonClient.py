@@ -29,41 +29,25 @@ def plot_histogram(data, name, xlabel, bins=50, xlims=None, logy=False):
         plt.yscale('log')
     plt.savefig(f"plots/{name.replace(" ", "_")}.png")
 
-def load_athena_to_detray_map(path):
-    """Parse the same "<hex athena id>,<decimal detray id>" file the server
-    loads (read_athena_to_detray_mapping in TracccEdmConversion.hpp)."""
-    mapping = {}
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            hex_athena, detray = line.split(",")
-            mapping[int(hex_athena, 16)] = int(detray)
-    return mapping
-
 def load_geom_id_map(path):
-    """Load the geometry_id (detray) -> module_index map dumped once by the
-    server (dump_geom_id_map in TracccGpuStandalone.cpp). This ordering comes
-    from traccc/detray's detector construction and can't be recomputed
-    client-side, so it's shipped as a static file instead."""
+    """Load the geometry_id -> module_index map dumped once by the server
+    (dump_geom_id_map in TracccGpuStandalone.cpp). This ordering comes from
+    traccc/detray's detector construction and can't be recomputed client-side,
+    so it's shipped as a static file instead."""
     with open(path) as f:
         raw = json.load(f)
     return {int(k): v for k, v in raw.items()}
 
-def build_cell_buffer(input_data, athena_to_detray, geom_id_map):
+def build_cell_buffer(input_data, geom_id_map):
     """Pack CSV cells into the raw byte layout expected by
     TracccGpuStandalone::cells_from_buffer: an 8-byte cell-count header
     followed by 5 SoA column blocks of length N (channel0, channel1,
     activation, time, module_index)."""
     input_data = input_data[input_data["geometry_id"] != 0]
 
-    detray_ids = np.array(
-        [athena_to_detray[int(gid)] for gid in input_data["geometry_id"]],
-        dtype=np.uint64,
-    )
     module_index = np.array(
-        [geom_id_map[int(did)] for did in detray_ids], dtype=np.uint32
+        [geom_id_map[int(gid)] for gid in input_data["geometry_id"]],
+        dtype=np.uint32,
     )
     channel0 = input_data["channel0"].to_numpy(dtype=np.uint32)
     channel1 = input_data["channel1"].to_numpy(dtype=np.uint32)
@@ -231,8 +215,6 @@ def main():
 
     input_data = pd.read_csv(FLAGS.filename)
 
-    athena_to_detray = load_athena_to_detray_map(FLAGS.athena_map)
-
     geom_map_path = FLAGS.geom_map
     if geom_map_path is None:
         geom_map_path = os.path.join(
@@ -241,7 +223,7 @@ def main():
         )
     geom_id_map = load_geom_id_map(geom_map_path)
 
-    cell_buffer = build_cell_buffer(input_data, athena_to_detray, geom_id_map)
+    cell_buffer = build_cell_buffer(input_data, geom_id_map)
 
     inputs = [
         grpcclient.InferInput("CELLS", cell_buffer.shape, "UINT8")
@@ -290,10 +272,6 @@ def main():
     ndf = tracks["ndf"][accepted]
     l0, l1, phi, theta, qop = (bound[:, i] for i in range(5))
 
-    # Measurement surface links are raw detray IDs. A consumer wanting Athena
-    # identifiers inverts the map it already loaded:
-    #   {v: k for k, v in athena_to_detray.items()}
-
     plot_histogram(chi2, "Chi2", "Chi2", logy=True)
     plot_histogram(ndf, "NDF", "NDF")
     plot_histogram(l0, "L0", "L0")
@@ -336,15 +314,6 @@ if __name__ == "__main__":
         required=False,
         default="gpu",
         help="Model architecture. Default is gpu.",
-    )
-    parser.add_argument(
-        "--athena-map",
-        type=str,
-        required=False,
-        default="/traccc/itk-geometry/athenaIdentifierToDetrayMap.txt",
-        help="Path to the athena->detray geometry ID mapping file used by "
-             "the server. Default is /traccc/itk-geometry/"
-             "athenaIdentifierToDetrayMap.txt.",
     )
     parser.add_argument(
         "--print-stats",

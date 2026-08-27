@@ -1,5 +1,4 @@
 #include "TracccGpuStandalone.hpp"
-#include "TracccEdmConversion.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -18,11 +17,8 @@ struct cell_order {
     }
 };  // struct cell_order
 
-std::vector<traccc::io::csv::cell> read_csv(
-    const std::string &filename,
-    const std::map<int64_t, uint64_t> athenaToDetrayMap,
-    bool athenaIDs = false
-) {
+std::vector<traccc::io::csv::cell> read_csv(const std::string &filename)
+{
     std::vector<traccc::io::csv::cell> cells;
     auto reader = traccc::io::csv::make_cell_reader(filename);
     traccc::io::csv::cell iocell;
@@ -39,10 +35,6 @@ std::vector<traccc::io::csv::cell> read_csv(
             continue;
         }
 
-        if (athenaIDs) {
-            iocell.geometry_id = athenaToDetrayMap.at(iocell.geometry_id);
-        } 
-
         cells.push_back(iocell);
     }
 
@@ -57,9 +49,7 @@ std::vector<uint8_t> build_cell_buffer(
     const std::vector<traccc::io::csv::cell> &cells,
     const std::unordered_map<traccc::geometry_id, unsigned int> &geomIdMap)
 {
-    // Group by (already detray-mapped) geometry_id and sort each group by
-    // channel1/channel0, mirroring the ordering the clusterization algorithm
-    // expects. Sorting happens on the client side.
+
     std::map<std::uint64_t, std::vector<traccc::io::csv::cell>> cellsByModule;
     for (const auto &cell : cells) {
         cellsByModule[cell.geometry_id].push_back(cell);
@@ -82,6 +72,8 @@ std::vector<uint8_t> build_cell_buffer(
 
     std::uint64_t i = 0;
     for (const auto &[geometry_id, moduleCells] : cellsByModule) {
+        // module_index is a row index into the detector description, not an ID,
+        // so the cell's geometry ID has to be looked up here.
         auto it = geomIdMap.find(geometry_id);
         if (it == geomIdMap.end()) {
             throw std::runtime_error(
@@ -303,7 +295,7 @@ int main(int argc, char *argv[])
     std::cout << "Using device ID: " << deviceID << std::endl;
     std::cout << "Running " << argv[0] << " on " << event_file << std::endl;
 
-    const std::string geoDir = "/traccc/itk-geometry/";
+    const std::string geoDir = "/global/homes/m/milescb/tracking/traccc-aaS-gpu/traccc/data/geometries/odd/";
 
     vecmem::host_memory_resource host_mr;
     vecmem::cuda::device_memory_resource device_mr(deviceID);
@@ -315,13 +307,7 @@ int main(int argc, char *argv[])
         (std::filesystem::path(event_file).parent_path() /
          "geom_id_to_module_index.json").string());
 
-    // The client owns the athena -> detray mapping, so load it here rather than
-    // in the wrapper: the server never needs it.
-    const std::map<int64_t, uint64_t> athena_to_detray =
-        read_athena_to_detray_mapping(geoDir + "/athenaIdentifierToDetrayMap.txt");
-
-    std::vector<traccc::io::csv::cell> cells = read_csv(
-        event_file, athena_to_detray, true);
+    std::vector<traccc::io::csv::cell> cells = read_csv(event_file);
 
     std::vector<uint8_t> cell_buffer = build_cell_buffer(
         cells, traccc_gpu.getGeomIdMap());
