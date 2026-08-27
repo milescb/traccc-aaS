@@ -1,6 +1,8 @@
 import tritonclient.grpc as grpcclient
 
 import argparse
+import json
+import os
 import sys
 
 import numpy as np
@@ -27,6 +29,79 @@ def plot_histogram(data, name, xlabel, bins=50, xlims=None, logy=False):
         plt.yscale('log')
     plt.savefig(f"plots/{name.replace(" ", "_")}.png")
 
+def load_athena_to_detray_map(path):
+    """Parse the same "<hex athena id>,<decimal detray id>" file the server
+    loads (read_athena_to_detray_mapping in TracccEdmConversion.hpp)."""
+    mapping = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            hex_athena, detray = line.split(",")
+            mapping[int(hex_athena, 16)] = int(detray)
+    return mapping
+
+def load_geom_id_map(path):
+    """Load the geometry_id (detray) -> module_index map dumped once by the
+    server (dump_geom_id_map in TracccGpuStandalone.cpp). This ordering comes
+    from traccc/detray's detector construction and can't be recomputed
+    client-side, so it's shipped as a static file instead."""
+    with open(path) as f:
+        raw = json.load(f)
+    return {int(k): v for k, v in raw.items()}
+
+def build_cell_buffer(input_data, athena_to_detray, geom_id_map):
+    """Pack CSV cells into the raw byte layout expected by
+    TracccGpuStandalone::cells_from_buffer: an 8-byte cell-count header
+    followed by 5 SoA column blocks of length N (channel0, channel1,
+    activation, time, module_index)."""
+    input_data = input_data[input_data["geometry_id"] != 0]
+
+    detray_ids = np.array(
+        [athena_to_detray[int(gid)] for gid in input_data["geometry_id"]],
+        dtype=np.uint64,
+    )
+    module_index = np.array(
+        [geom_id_map[int(did)] for did in detray_ids], dtype=np.uint32
+    )
+    channel0 = input_data["channel0"].to_numpy(dtype=np.uint32)
+    channel1 = input_data["channel1"].to_numpy(dtype=np.uint32)
+    activation = input_data["value"].to_numpy(dtype=np.float32)
+    time = input_data["timestamp"].to_numpy(dtype=np.float32)
+
+    # Sort cells per-module by channel1/channel0, mirroring the ordering the
+    # clusterization algorithm expects. Sorting happens on the client side.
+    order = np.lexsort((channel0, channel1, module_index))
+
+    num_cells = np.uint64(len(channel0))
+    buffer = (
+        num_cells.tobytes()
+        + channel0[order].tobytes()
+        + channel1[order].tobytes()
+        + activation[order].tobytes()
+        + time[order].tobytes()
+        + module_index[order].tobytes()
+    )
+    return np.frombuffer(buffer, dtype=np.uint8)
+
+def print_inference_statistics(triton_client, model_name):
+    """Fetch and print Triton's per-model statistics (queue/compute time,
+    request counts) via the gRPC client's built-in stats API."""
+    stats = triton_client.get_inference_statistics(model_name=model_name, as_json=True)
+    for model_stat in stats.get("model_stats", []):
+        inference_stats = model_stat.get("inference_stats", {})
+        print(f"\n=== Triton stats for '{model_stat['name']}' (version {model_stat['version']}) ===")
+        print(f"Inference count:  {model_stat.get('inference_count', 0)}")
+        print(f"Execution count:  {model_stat.get('execution_count', 0)}")
+        for field in ("success", "fail", "queue", "compute_input", "compute_infer", "compute_output"):
+            duration = inference_stats.get(field, {})
+            count = int(duration.get("count", 0))
+            ns = int(duration.get("ns", 0))
+            avg_ms = (ns / count / 1e6) if count else 0.0
+            print(f"  {field:<15} count={count:<8} total={ns/1e6:.3f} ms  avg={avg_ms:.3f} ms")
+    print()
+
 def main():
     try:
         triton_client = grpcclient.InferenceServerClient(
@@ -37,19 +112,23 @@ def main():
         sys.exit(1)
 
     input_data = pd.read_csv(FLAGS.filename)
-    
-    cell_positions_columns = ['geometry_id', 'measurement_id', 'channel0', 'channel1']
-    cell_properties_columns = ['timestamp', 'value']
 
-    input0_data = input_data[cell_positions_columns].to_numpy(dtype=np.int64)
-    input1_data = input_data[cell_properties_columns].to_numpy(dtype=np.float32)
+    athena_to_detray = load_athena_to_detray_map(FLAGS.athena_map)
+
+    geom_map_path = FLAGS.geom_map
+    if geom_map_path is None:
+        geom_map_path = os.path.join(
+            os.path.dirname(os.path.abspath(FLAGS.filename)),
+            "geom_id_to_module_index.json",
+        )
+    geom_id_map = load_geom_id_map(geom_map_path)
+
+    cell_buffer = build_cell_buffer(input_data, athena_to_detray, geom_id_map)
 
     inputs = [
-        grpcclient.InferInput("CELL_POSITIONS", input0_data.shape, "INT64"),
-        grpcclient.InferInput("CELL_PROPERTIES", input1_data.shape, "FP32")
+        grpcclient.InferInput("CELLS", cell_buffer.shape, "UINT8")
     ]
-    inputs[0].set_data_from_numpy(input0_data)
-    inputs[1].set_data_from_numpy(input1_data)
+    inputs[0].set_data_from_numpy(cell_buffer)
 
     # Specify outputs
     output_names = [
@@ -60,12 +139,17 @@ def main():
     ]
     outputs = [grpcclient.InferRequestedOutput(name) for name in output_names]
 
+    model_name = "traccc-gpu"
+
     # Send inference request synchronously
     result = triton_client.infer(
-        model_name="traccc-gpu",
+        model_name=model_name,
         inputs=inputs,
         outputs=outputs
     )
+
+    if FLAGS.print_stats:
+        print_inference_statistics(triton_client, model_name)
 
     # Retrieve and process outputs
     trk_params = result.as_numpy("TRK_PARAMS")       # [n_tracks, 8]
@@ -82,20 +166,7 @@ def main():
     theta = trk_params[:, 5]
     qop = trk_params[:, 6]
     
-    valid_theta_mask = ((np.abs(theta) <= 2 * 3.14) & (np.abs(phi) <= 2 * 3.14) & (abs(l0) < 1000) 
-                        & (abs(l1) < 1000) & (phi != 0) & (theta != 0) & (qop != 0) 
-                        & (l0 != 0) & (l1 != 0))
-    print(f"Total tracks before filter: {len(theta)}")
-    print(f"Tracks passing filter: {np.sum(valid_theta_mask)}")
-    print(f"Tracks rejected: {len(theta) - np.sum(valid_theta_mask)}")
-    print(f"Filter efficiency: {100 * np.sum(valid_theta_mask) / len(theta):.2f}%")
-    chi2 = chi2[valid_theta_mask]
-    ndf = ndf[valid_theta_mask]
-    l0 = l0[valid_theta_mask]
-    l1 = l1[valid_theta_mask]
-    phi = phi[valid_theta_mask]
-    theta = theta[valid_theta_mask]
-    qop = qop[valid_theta_mask]
+    print(f"Recieved {len(chi2)} tracks. Plotting parameters...")
     
     plot_histogram(chi2, "Chi2", "Chi2", logy=True)
     plot_histogram(ndf, "NDF", "NDF")
@@ -105,67 +176,7 @@ def main():
     plot_histogram(theta, "Theta", "Theta (radians)")
     plot_histogram(qop, "Qop", "Q/P (1/GeV)")
     
-    # Reconstruct tracks using geometry_id separators (gid == 0) as in traccc.cc
-    track_measurements = []
-    track_covariances = []
-    track_geometry_ids = []
-
-    cur_meas = []
-    cur_cov = []
-    cur_geo = []
-    meas_idx = 0
-    for gid in geometry_ids:
-        if gid == 0:
-            if cur_meas:
-                track_measurements.append(np.stack(cur_meas))
-                track_covariances.append(np.stack(cur_cov))
-                track_geometry_ids.append(np.stack(cur_geo))
-                cur_meas, cur_cov, cur_geo = [], [], []
-            continue
-        if meas_idx >= len(measurements):
-            break
-        cur_meas.append(measurements[meas_idx])
-        cur_cov.append(covariances[meas_idx])
-        cur_geo.append(gid)
-        meas_idx += 1
-    if cur_meas:
-        track_measurements.append(np.stack(cur_meas))
-        track_covariances.append(np.stack(cur_cov))
-        track_geometry_ids.append(np.stack(cur_geo))
-
-    ak_measurements = ak.Array(track_measurements)
-    ak_covariances = ak.Array(track_covariances)
-    ak_geometry_ids = ak.Array(track_geometry_ids)
-
-    print(f"Number of tracks: {len(trk_params)}")
-    print(f"Number of measurements per track: {ak.num(ak_measurements, axis=1)}")
-    print(f"Total measurements: {ak.sum(ak.num(ak_measurements, axis=1))}")
-    print(f"Track parameters shape: {trk_params.shape}")
-    print(f"Awkward measurements shape: {ak_measurements.type}")
-    print(f"Awkward covariances shape: {ak_covariances.type}")
-    print(f"Awkward geometry IDs shape: {ak_geometry_ids.type}")
-
-    # Extract variances from covariances (diag elements 0 and 7)
-    ak_var_x = ak.Array([[cov[0] for cov in covs] for covs in track_covariances])
-    ak_var_y = ak.Array([[cov[6] for cov in covs] for covs in track_covariances])
-
-    # Example: Access measurements for first tracks
-    if len(ak_measurements) > 0:
-        print(f"\nTrack 0 has {len(ak_measurements[0])} measurements:")
-        print(f"  Local positions: {ak_measurements[0]}")
-        print(f"  Local variances (from diagonal): x={ak_var_x[0]}, y={ak_var_y[0]}")
-        print(f"  Geometry IDs: {ak_geometry_ids[0]}")
-    if len(ak_measurements) > 1:
-        print(f"\nTrack 1 has {len(ak_measurements[1])} measurements:")
-        print(f"  Local positions: {ak_measurements[1]}")
-        print(f"  Local variances (from diagonal): x={ak_var_x[1]}, y={ak_var_y[1]}")
-        print(f"  Geometry IDs: {ak_geometry_ids[1]}")
-    
-    # Additional awkward array operations
-    print("\nAwkward array operations:")
-    print(f"Average measurements per track: {ak.mean(ak.num(ak_measurements, axis=1)):.2f}")
-    print(f"Max measurements in any track: {ak.max(ak.num(ak_measurements, axis=1))}")
-    print(f"Min measurements in any track: {ak.min(ak.num(ak_measurements, axis=1))}")
+    print("Inference complete!")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -199,6 +210,32 @@ if __name__ == "__main__":
         required=False,
         default="gpu",
         help="Model architecture. Default is gpu.",
+    )
+    parser.add_argument(
+        "--athena-map",
+        type=str,
+        required=False,
+        default="/traccc/itk-geometry/athenaIdentifierToDetrayMap.txt",
+        help="Path to the athena->detray geometry ID mapping file used by "
+             "the server. Default is /traccc/itk-geometry/"
+             "athenaIdentifierToDetrayMap.txt.",
+    )
+    parser.add_argument(
+        "--print-stats",
+        action="store_true",
+        required=False,
+        default=False,
+        help="Print Triton's per-model inference statistics (queue/compute "
+             "time, request counts) after the inference call.",
+    )
+    parser.add_argument(
+        "--geom-map",
+        type=str,
+        required=False,
+        default=None,
+        help="Path to the geom_id_to_module_index.json file dumped by the "
+             "server (TracccGpuStandalone::dump_geom_id_map). Default is "
+             "geom_id_to_module_index.json next to --filename.",
     )
     FLAGS = parser.parse_args()
 

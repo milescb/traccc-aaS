@@ -1,4 +1,4 @@
-FROM docker.io/milescb/triton-server:25.02-py3_gcc13.3
+FROM docker.io/milescb/triton-server:26.06-py3_gcc15_cuda13.3
 
 # install traccc
 WORKDIR /traccc
@@ -21,16 +21,10 @@ ENV LD_LIBRARY_PATH=/traccc/install/lib:$LD_LIBRARY_PATH
 
 # install custom backend
 WORKDIR /traccc-aaS
-RUN git clone https://github.com/milescb/traccc-aaS.git && cd traccc-aaS/
-
-# Replace hard-coded paths in TracccGpuStandalone.hpp with local paths in docker
-RUN sed -i 's|/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-01/itk-geo/|/traccc/itk-geometry/|g' \
-                /traccc-aaS/traccc-aaS/standalone/src/TracccGpuStandalone.hpp
-
-# # for debug mode, enable more logging 
-# RUN sed -i 's|bool print_stats = true;|bool print_stats = false;|g' \
-#                 /traccc-aaS/traccc-aaS/backend/traccc-gpu/src/traccc.cc
+RUN git clone https://github.com/milescb/traccc-aaS.git && cd traccc-aaS/ \
+        && git checkout accept-raw-cell-buffer
 
 RUN cd /traccc-aaS/traccc-aaS/backend/traccc-gpu && mkdir build install && cd build && \
-    cmake -B . -S ../ -DCMAKE_INSTALL_PREFIX=../install -DCMAKE_BUILD_TYPE=Release && \
+    cmake -B . -S ../ -DCMAKE_INSTALL_PREFIX=../install -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_FLAGS="-Wno-template-body" && \
     cmake --build . --target install -- -j20

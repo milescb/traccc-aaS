@@ -4,6 +4,8 @@
 #include <iostream>
 #include <memory>
 #include <chrono>
+#include <cstdint>
+#include <cstring>
 #include <unordered_map>
 
 // CUDA include(s).
@@ -89,7 +91,6 @@ static int setCudaDevice(int deviceID)
     } while (false)
 
 std::chrono::high_resolution_clock::time_point start_total, end_total;
-std::chrono::high_resolution_clock::time_point start_read, end_read;
 std::chrono::high_resolution_clock::time_point start_copy_in, end_copy_in;
 std::chrono::high_resolution_clock::time_point start_cluster, end_cluster;
 std::chrono::high_resolution_clock::time_point start_spacepoint, end_spacepoint;
@@ -98,17 +99,6 @@ std::chrono::high_resolution_clock::time_point start_params, end_params;
 std::chrono::high_resolution_clock::time_point start_finding, end_finding;
 std::chrono::high_resolution_clock::time_point start_fitting, end_fitting;
 std::chrono::high_resolution_clock::time_point start_copy_out, end_copy_out;
-
-struct cell_order {
-    bool operator()(const traccc::io::csv::cell& lhs,
-                    const traccc::io::csv::cell& rhs) const {
-        if (lhs.channel1 != rhs.channel1) {
-            return (lhs.channel1 < rhs.channel1);
-        } else {
-            return (lhs.channel0 < rhs.channel0);
-        }
-    }
-};  // struct cell_order
 
 struct TracccResults {
     traccc::edm::track_container<traccc::default_algebra>::host tracks_and_states;
@@ -297,19 +287,12 @@ private:
     /// Track finding algorithm
     finding_algorithm m_finding;
 
-    // Helper function to read in cells
-    std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>> read_all_cells(
-        const std::vector<traccc::io::csv::cell> &cells);
-
-    void read_cells(traccc::edm::silicon_cell_collection::host &out,
-                const std::vector<traccc::io::csv::cell> &cells);
-
 public:
     TracccGpuStandalone( 
         vecmem::host_memory_resource* host_mr,
         vecmem::cuda::device_memory_resource* device_mr,
         int deviceID = 0,
-        const std::string& geoDir = "/global/cfs/projectdirs/m3443/data/GNN4ITK-traccc/ITk_data/ATLAS-P2-RUN4-03-00-01/itk-geo/") :
+        const std::string& geoDir = "/traccc/itk-geometry/") :
             m_device_id(deviceID), 
             m_geoDir(geoDir),
             logger(traccc::getDefaultLogger("TracccGpuStandalone", traccc::Logging::Level::INFO)),
@@ -368,11 +351,8 @@ public:
     // default destructor
     ~TracccGpuStandalone() = default;
 
-    std::vector<traccc::io::csv::cell> read_from_array(
-        const int64_t* cell_positions,
-        const float* cell_properties,
-        size_t num_cells,
-        bool athena_ids);
+    traccc::edm::silicon_cell_collection::host cells_from_buffer(
+        const uint8_t* buffer, size_t byte_size);
 
     // getters
     const std::map<int64_t, uint64_t>& getAthenaToDetrayMap() const {
@@ -383,9 +363,14 @@ public:
         return m_detray_to_athena_map;
     }
 
+    const std::unordered_map<traccc::geometry_id, unsigned int>& getGeomIdMap() const {
+        return m_geomIdMap;
+    }
+
     void initialize();
 
-    TracccResults run(std::vector<traccc::io::csv::cell> cells, bool show_stats = false);
+    TracccResults run(traccc::edm::silicon_cell_collection::host cells,
+                      bool show_stats = false);
 
 };
 
@@ -397,10 +382,7 @@ void TracccGpuStandalone::initialize()
     m_detector_opts.digitization_file = m_geoDir + "/ITk_digitization_config.json";
     m_detector_opts.grid_file = m_geoDir + "/detray_detector_surface_grids.json";
     m_detector_opts.material_file = m_geoDir + "/detray_detector_material_maps.json";
-    // ITk has no separate conditions file. The conditions reader only picks up
-    // the optional "shift" key, which this file does not carry, so every module
-    // ends up with a zero measurement translation.
-    m_detector_opts.conditions_file = m_detector_opts.digitization_file;
+    m_detector_opts.conditions_file = m_geoDir + "/ITk_digitization_config.json";
 
     // Load Athena-to-Detray mapping
     std::string athenaTransformsPath = m_geoDir + "/athenaIdentifierToDetrayMap.txt";
@@ -458,21 +440,15 @@ void TracccGpuStandalone::initialize()
 }
 
 TracccResults TracccGpuStandalone::run(
-    std::vector<traccc::io::csv::cell> cells, bool show_stats
+    traccc::edm::silicon_cell_collection::host cells, bool show_stats
 ) {
     if (show_stats) start_total = std::chrono::high_resolution_clock::now();
-
-    // Read cells
-    if (show_stats) start_read = std::chrono::high_resolution_clock::now();
-    traccc::edm::silicon_cell_collection::host read_out(m_host_mr);
-    read_cells(read_out, cells);
-    if (show_stats) end_read = std::chrono::high_resolution_clock::now();
 
     // Copy to device
     if (show_stats) start_copy_in = std::chrono::high_resolution_clock::now();
     traccc::edm::silicon_cell_collection::buffer cells_buffer(
-        static_cast<unsigned int>(read_out.size()), m_cached_device_mr);
-    m_copy(vecmem::get_data(read_out), cells_buffer)->ignore();
+        static_cast<unsigned int>(cells.size()), m_cached_device_mr);
+    m_copy(vecmem::get_data(cells), cells_buffer)->ignore();
     if (show_stats) end_copy_in = std::chrono::high_resolution_clock::now();
 
     // Clusterization
@@ -527,9 +503,6 @@ TracccResults TracccGpuStandalone::run(
 
         // Print timing information
         std::cout << "\n=== Timing Information ===" << std::endl;
-        std::cout << "Read cells:          " 
-                << std::chrono::duration<double, std::milli>(end_read - start_read).count() 
-                << " ms" << std::endl;
         std::cout << "Copy to device:      " 
                 << std::chrono::duration<double, std::milli>(end_copy_in - start_copy_in).count() 
                 << " ms" << std::endl;
@@ -574,101 +547,66 @@ TracccResults TracccGpuStandalone::run(
     return {track_states_host, measurements_host};
 }
 
-std::vector<traccc::io::csv::cell> TracccGpuStandalone::read_from_array(
-    const int64_t* cell_positions,
-    const float* cell_properties,
-    size_t num_cells,
-    bool athena_ids = false)
+// Build a silicon_cell_collection directly from the raw client buffer.
+// Byte layout (little-endian / native), 1-D of length 8 + 20*N:
+//   offset 0        : uint64_t N              (cell count)
+//   then 5 contiguous column blocks, each length N (SoA order):
+//     channel0[N]     : uint32_t
+//     channel1[N]     : uint32_t
+//     activation[N]   : float32
+//     time[N]         : float32
+//     module_index[N] : uint32_t
+traccc::edm::silicon_cell_collection::host
+    TracccGpuStandalone::cells_from_buffer(const uint8_t* buffer, size_t byte_size)
 {
-    std::vector<traccc::io::csv::cell> cells;
-    cells.reserve(num_cells);
 
-    for (size_t i = 0; i < num_cells; ++i) 
-    {
+    traccc::edm::silicon_cell_collection::host cells(m_cached_pinned_host_mr);
 
-        traccc::io::csv::cell cell;
-
-        if (athena_ids){
-            cell.geometry_id = m_athena_to_detray_map.at(cell_positions[i * 4]);
-        } else {
-            cell.geometry_id = cell_positions[i * 4];
-        }
-        cell.measurement_id = cell_positions[i * 4 + 1];
-        cell.channel0 = cell_positions[i * 4 + 2];
-        cell.channel1 = cell_positions[i * 4 + 3];
-
-        cell.timestamp = cell_properties[i * 2];
-        cell.value = cell_properties[i * 2 + 1];
-
-        cells.push_back(cell);
+    // Need at least the 8-byte header carrying the cell count.
+    if (buffer == nullptr || byte_size < sizeof(std::uint64_t)) {
+        throw std::runtime_error(
+            "CELLS buffer is too small to contain the cell count header");
     }
+
+    // Read N with memcpy to avoid an unaligned 8-byte load.
+    std::uint64_t num_cells = 0;
+    std::memcpy(&num_cells, buffer, sizeof(std::uint64_t));
+
+    // Validate the declared layout: 8-byte header + 5 column blocks of N.
+    //   channel0/channel1/module_index : uint32 (4 bytes)
+    //   activation/time                : float32 (4 bytes)
+    const size_t expected_size =
+        sizeof(std::uint64_t) + static_cast<size_t>(num_cells) * 20u;
+    if (byte_size != expected_size) {
+        throw std::runtime_error(
+            "CELLS buffer size mismatch: expected " +
+            std::to_string(expected_size) + " bytes for N=" +
+            std::to_string(num_cells) + ", got " + std::to_string(byte_size));
+    }
+
+    static_assert(sizeof(traccc::channel_id) == 4u,
+                  "CELLS wire format assumes 4-byte channel_id");
+    static_assert(sizeof(float) == 4u,
+                  "CELLS wire format assumes 4-byte float");
+    static_assert(sizeof(unsigned int) == 4u,
+                  "CELLS wire format assumes 4-byte module_index");
+
+    const std::size_t n = static_cast<std::size_t>(num_cells);
+    if (n == 0u) {
+        return cells;
+    }
+
+    const std::size_t block = n * 4u;
+    const uint8_t* base = buffer + sizeof(std::uint64_t);
+
+    cells.resize(n);
+    std::memcpy(cells.channel0().data(), base + 0u * block, block);
+    std::memcpy(cells.channel1().data(), base + 1u * block, block);
+    std::memcpy(cells.activation().data(), base + 2u * block, block);
+    std::memcpy(cells.time().data(), base + 3u * block, block);
+    std::memcpy(cells.module_index().data(), base + 4u * block, block);
 
     return cells;
-}
-
-std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>>
-    TracccGpuStandalone::read_all_cells(
-        const std::vector<traccc::io::csv::cell> &cells)
-{
-    std::unordered_map<std::uint64_t, std::vector<traccc::io::csv::cell>> result;
-
-    // Pre-count cells per geometry_id to avoid reallocations
-    std::unordered_map<std::uint64_t, size_t> counts;
-    for (const auto &cell : cells) {
-        counts[cell.geometry_id]++;
-    }
-    
-    // Reserve space for each geometry_id
-    for (const auto& [geom_id, count] : counts) {
-        result[geom_id].reserve(count);
-    }
-
-    for (const auto &iocell : cells)
-    {
-        result[iocell.geometry_id].emplace_back(iocell.geometry_id, iocell.measurement_id, 
-                            iocell.channel0, iocell.channel1, 
-                            iocell.timestamp, iocell.value);
-    }
-
-    // Sorting happens on the client side!
-    // put here again for redundancy
-    for (auto& [_, cells] : result) 
-    {
-        std::sort(cells.begin(), cells.end(), ::cell_order());
-    }
-
-    return result;
-}
-
-void TracccGpuStandalone::read_cells(traccc::edm::silicon_cell_collection::host &out,
-                const std::vector<traccc::io::csv::cell> &cells)
-{
-    out.resize(0);
-    out.reserve(cells.size());
-
-    // get the cells and modules in intermediate format
-    auto cellsMap = read_all_cells(cells);
-
-    // Fill the output containers with the ordered cells and modules.
-    for (const auto& [geometry_id, cellz] : cellsMap) {
-
-        // Figure out the index of the detector description object for this
-        // group of cells.
-        unsigned int ddIndex = 0;
-        auto it = m_geomIdMap.find(geometry_id);
-        if (it == m_geomIdMap.end()) {
-            throw std::runtime_error("Could not find geometry ID (" +
-                                        std::to_string(geometry_id) +
-                                        ") in the detector description");
-        }
-        ddIndex = it->second;
-
-        // Add the cells to the output.
-        for (auto& cell : cellz) {
-            out.push_back({cell.channel0, cell.channel1, cell.value,
-                             cell.timestamp, ddIndex});
-        }
-    }
 }
 
 #endif 
