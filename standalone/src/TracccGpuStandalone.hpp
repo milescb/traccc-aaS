@@ -6,13 +6,14 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
+#include <type_traits>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 // CUDA include(s).
 #include <cuda_runtime.h>
-
-// local includes
-#include "TracccEdmConversion.hpp"
 
 // Project include(s).
 #include "traccc/clusterization/clustering_config.hpp"
@@ -228,10 +229,6 @@ private:
     /// (Asynchronous) memory copy object
     mutable vecmem::cuda::async_copy m_copy;
 
-    /// Athena to detray map
-    std::map<int64_t, uint64_t> m_athena_to_detray_map;
-    /// Detray to Athena map (reverse mapping)
-    std::unordered_map<uint64_t, int64_t> m_detray_to_athena_map;
     /// detector description to geo id map
     std::unordered_map<traccc::geometry_id, unsigned int> m_geomIdMap;
 
@@ -354,15 +351,9 @@ public:
     traccc::edm::silicon_cell_collection::host cells_from_buffer(
         const uint8_t* buffer, size_t byte_size);
 
+    std::vector<uint8_t> tracks_to_buffer(const TracccResults& results) const;
+
     // getters
-    const std::map<int64_t, uint64_t>& getAthenaToDetrayMap() const {
-        return m_athena_to_detray_map;
-    }
-
-    const std::unordered_map<uint64_t, int64_t>& getDetrayToAthenaMap() const {
-        return m_detray_to_athena_map;
-    }
-
     const std::unordered_map<traccc::geometry_id, unsigned int>& getGeomIdMap() const {
         return m_geomIdMap;
     }
@@ -383,16 +374,6 @@ void TracccGpuStandalone::initialize()
     m_detector_opts.grid_file = m_geoDir + "/detray_detector_surface_grids.json";
     m_detector_opts.material_file = m_geoDir + "/detray_detector_material_maps.json";
     m_detector_opts.conditions_file = m_geoDir + "/ITk_digitization_config.json";
-
-    // Load Athena-to-Detray mapping
-    std::string athenaTransformsPath = m_geoDir + "/athenaIdentifierToDetrayMap.txt";
-    m_athena_to_detray_map = read_athena_to_detray_mapping(athenaTransformsPath);
-
-    // Create reverse mapping from Detray to Athena
-    m_detray_to_athena_map.reserve(m_athena_to_detray_map.size());
-    for (const auto& [athena_id, detray_id] : m_athena_to_detray_map) {
-        m_detray_to_athena_map[detray_id] = athena_id;
-    }
 
     traccc::io::read_detector_description(
         m_det_descr_storage, m_det_cond_storage, m_detector_opts.detector_file,
@@ -609,4 +590,92 @@ traccc::edm::silicon_cell_collection::host
     return cells;
 }
 
-#endif 
+
+// The traccc EDM containers are SoA: every field is its own contiguous,
+// trivially-copyable column. 
+//
+// Byte layout (little-endian / native):
+//   uint64  n_measurements, n_tracks, n_states, n_links
+//   then    every column in visit_track_columns order
+//   then    uint32 link_counts[n_tracks]
+//   then    track_constituent_link links[n_links]
+//
+template <typename MEASUREMENTS, typename TRACKS, typename STATES,
+          typename VISITOR>
+void visit_track_columns(MEASUREMENTS&& measurements, TRACKS&& tracks,
+                         STATES&& states, VISITOR&& visit) {
+
+    // measurement_collection
+    visit(measurements.local_position());
+    visit(measurements.local_variance());
+    visit(measurements.dimensions());
+    visit(measurements.time());
+    visit(measurements.diameter());
+    visit(measurements.identifier());
+    visit(measurements.surface_link());
+    visit(measurements.subspace());
+    visit(measurements.cluster_index());
+
+    // track_collection (constituent_links is jagged, handled by the caller)
+    visit(tracks.fit_outcome());
+    visit(tracks.params());
+    visit(tracks.ndf());
+    visit(tracks.chi2());
+    visit(tracks.pval());
+    visit(tracks.nholes());
+
+    // track_state_collection
+    visit(states.state());
+    visit(states.filtered_chi2());
+    visit(states.smoothed_chi2());
+    visit(states.backward_chi2());
+    visit(states.filtered_params());
+    visit(states.smoothed_params());
+    visit(states.measurement_index());
+}
+
+std::vector<uint8_t> TracccGpuStandalone::tracks_to_buffer(
+    const TracccResults& results) const
+{
+    const auto& measurements = results.measurements;
+    const auto& tracks = results.tracks_and_states.tracks;
+    const auto& states = results.tracks_and_states.states;
+
+    // Flatten the one jagged column.
+    const auto& constituent_links = tracks.constituent_links();
+    std::vector<std::uint32_t> link_counts;
+    std::vector<traccc::edm::track_constituent_link> links;
+    link_counts.reserve(constituent_links.size());
+    for (std::size_t i = 0; i < constituent_links.size(); ++i) {
+        const auto& track_links = constituent_links[i];
+        link_counts.push_back(static_cast<std::uint32_t>(track_links.size()));
+        links.insert(links.end(), track_links.begin(), track_links.end());
+    }
+
+    const std::uint64_t counts[4] = {measurements.size(), tracks.size(),
+                                     states.size(), links.size()};
+
+    std::vector<uint8_t> buffer;
+    auto append = [&buffer](const auto& column) {
+        using value_type =
+            typename std::remove_cvref_t<decltype(column)>::value_type;
+        static_assert(std::is_trivially_copyable_v<value_type>,
+                      "SoA columns must be trivially copyable to go on the wire");
+        if (column.empty()) {
+            return;
+        }
+        const auto* bytes = reinterpret_cast<const uint8_t*>(column.data());
+        buffer.insert(buffer.end(), bytes,
+                      bytes + column.size() * sizeof(value_type));
+    };
+
+    const auto* counts_bytes = reinterpret_cast<const uint8_t*>(counts);
+    buffer.insert(buffer.end(), counts_bytes, counts_bytes + sizeof(counts));
+    visit_track_columns(measurements, tracks, states, append);
+    append(link_counts);
+    append(links);
+
+    return buffer;
+}
+
+#endif

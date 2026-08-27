@@ -3,6 +3,7 @@ install/
 data/
 plots/
 performance/
+__pycache__/
 
 # data formats
 *.json

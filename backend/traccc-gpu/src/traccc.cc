@@ -261,13 +261,13 @@ ModelState::ValidateModelConfig()
     RETURN_IF_ERROR(ModelConfig().MemberAsArray("input", &inputs));
     RETURN_IF_ERROR(ModelConfig().MemberAsArray("output", &outputs));
 
-    // The model must have exactly 1 input and 4 outputs.
+    // The model must have exactly 1 input and 1 output.
     RETURN_ERROR_IF_FALSE(
         inputs.ArraySize() == 1, TRITONSERVER_ERROR_INVALID_ARG,
         std::string("model configuration must have 1 input"));
     RETURN_ERROR_IF_FALSE(
-        outputs.ArraySize() == 4, TRITONSERVER_ERROR_INVALID_ARG,
-        std::string("model configuration must have 4 outputs"));
+        outputs.ArraySize() == 1, TRITONSERVER_ERROR_INVALID_ARG,
+        std::string("model configuration must have 1 output"));
 
     common::TritonJson::Value input_cells, output;
     RETURN_IF_ERROR(inputs.IndexAsObject(0, &input_cells));
@@ -673,176 +673,17 @@ TRITONBACKEND_ModelInstanceExecute(
     // 'output_buffer' corresponding to each request's output into the
     // response for that request.
 
-    // Process the outputs
-    {
-        // --------------- Process 'TRK_PARAMS', 'MEASUREMENTS', and 'GEOMETRY_IDS' ---------------
-        size_t num_tracks = traccc_result.tracks_and_states.tracks.size();
-        
-        // Buffers for the output tensors
-        std::vector<float> trk_params_buffer;
-        std::vector<float> measurements_buffer;
-        std::vector<float> covariances_buffer;
-        std::vector<int64_t> geometry_ids_buffer;
+    // Serialize the traccc containers into the raw client buffer (single UINT8
+    // tensor, layout documented above TracccGpuStandalone::tracks_to_buffer).
+    const std::vector<uint8_t> tracks_buffer =
+        instance_state->traccc_gpu_standalone_->tracks_to_buffer(traccc_result);
 
-        trk_params_buffer.reserve(num_tracks * 8);
-        measurements_buffer.reserve(num_tracks * 15 * 6); 
-        covariances_buffer.reserve(num_tracks * 15 * 25);
-        geometry_ids_buffer.reserve(num_tracks * 15);
-
-        // Track exclusion counters
-        int excluded_non_positive_ndf = 0;
-        int excluded_not_all_smoothed = 0;
-        int excluded_unknown = 0;
-        int excluded_no_state = 0;
-        int included_tracks = 0;
-
-        // Process all tracks
-        for (size_t i = 0; i < num_tracks; ++i) {
-            const auto& track = traccc_result.tracks_and_states.tracks.at(i);
-
-            // Check track fit outcome
-            auto track_fit_outcome = track.fit_outcome();
-            if (track_fit_outcome != traccc::track_fit_outcome::SUCCESS) {
-                ++excluded_unknown;
-                continue;
-            }
-            if (track.ndf() < 0) {
-                excluded_non_positive_ndf += 1;
-                continue;
-            }
-            if (track.constituent_links().size() < 3) {
-                excluded_no_state += 1;
-                continue;
-            }
-
-            // Add separator before this track's measurements, if it's not the first included track
-            // This is done only for geometry ids, and splits on the track are then done on this
-            // variable from the client side. 
-            if (included_tracks > 0) {
-                geometry_ids_buffer.push_back(0);
-            }
-
-            // --- Process Track Parameters ---
-            trk_params_buffer.push_back(static_cast<float>(track.chi2()));
-            trk_params_buffer.push_back(static_cast<float>(track.ndf()));
-
-            const auto& fitted_params = track.params();
-            trk_params_buffer.push_back(static_cast<float>(fitted_params.bound_local()[0]));
-            trk_params_buffer.push_back(static_cast<float>(fitted_params.bound_local()[1]));
-            trk_params_buffer.push_back(static_cast<float>(fitted_params.phi()));
-            trk_params_buffer.push_back(static_cast<float>(fitted_params.theta()));
-            trk_params_buffer.push_back(static_cast<float>(fitted_params.qop()));
-            trk_params_buffer.push_back(static_cast<float>(fitted_params.time()));
-
-            if (included_tracks < 3 && print_stats)
-            {
-                std::cout << "Track " << included_tracks << " parameters: ";
-                std::cout << static_cast<float>(track.chi2()) << " ";
-                std::cout << static_cast<float>(track.ndf()) << " ";
-                std::cout << static_cast<float>(fitted_params.bound_local()[0]) << " ";
-                std::cout << static_cast<float>(fitted_params.bound_local()[1]) << " ";
-                std::cout << static_cast<float>(fitted_params.phi()) << " ";
-                std::cout << static_cast<float>(fitted_params.theta()) << " ";
-                std::cout << static_cast<float>(fitted_params.qop()) << " ";
-                std::cout << static_cast<float>(fitted_params.time()) << std::endl;
-            }
-
-            // --- Process Measurements for this track ---
-            const auto& constituent_links = track.constituent_links();
-            for (size_t j = 0; j < constituent_links.size(); ++j) {
-                const auto& link = constituent_links[j];
-                
-                if (link.type != traccc::edm::track_constituent_link::track_state) {
-                    continue;
-                }
-                
-                size_t state_idx = link.index;
-                auto const& state = traccc_result.tracks_and_states.states.at(state_idx);
-                auto const& measurement =
-                    traccc_result.measurements.at(state.measurement_index());
-                
-                // Use the measurement local position and variance
-                measurements_buffer.push_back(measurement.local_position()[0]); // local x
-                measurements_buffer.push_back(measurement.local_position()[1]); // local y
-
-                auto const& smoothed_params = state.smoothed_params();
-                measurements_buffer.push_back(smoothed_params.phi());
-                measurements_buffer.push_back(smoothed_params.theta());
-                measurements_buffer.push_back(smoothed_params.qop());
-                measurements_buffer.push_back(smoothed_params.time());
-
-                auto const& cov = state.smoothed_params().covariance();
-                // Covariance matrix (5x5) flattened in row-major order
-                // TODO: only need to send upper triangle since symmetric
-                for (size_t row = 0; row < 5; ++row) {
-                    for (size_t col = 0; col < 5; ++col) {
-                        // check for nan or inf
-                        float value = static_cast<float>(cov[row][col]);
-                        if (std::isnan(value) || std::isinf(value) || (value > 1e8)) {
-                            covariances_buffer.push_back(0.0f); // fallback to 0.0f
-                        } else {
-                            covariances_buffer.push_back(value);
-                        }
-                    }
-                }
-
-                uint64_t detray_id = measurement.surface_link().value();
-                try {
-                    geometry_ids_buffer.push_back(
-                        instance_state->traccc_gpu_standalone_->getDetrayToAthenaMap().at(detray_id));
-                } catch (const std::out_of_range& e) {
-                    LOG_MESSAGE(TRITONSERVER_LOG_ERROR, 
-                                ("Missing reverse mapping for Detray ID: " 
-                                    + std::to_string(detray_id)).c_str());
-                    geometry_ids_buffer.push_back(detray_id); // Fallback
-                }
-            }
-
-            ++included_tracks;
-        }
-
-        if (print_stats)
-        {
-            // Log exclusion statistics
-            LOG_MESSAGE(TRITONSERVER_LOG_INFO,
-                        (std::string("Track Exclusion Summary - Total: ") + std::to_string(num_tracks) +
-                        ", Excluded (non-positive NDF): " + std::to_string(excluded_non_positive_ndf) +
-                        ", Excluded (not all smoothed): " + std::to_string(excluded_not_all_smoothed) +
-                        ", Excluded (unknown): " + std::to_string(excluded_unknown) +
-                        ", Excluded (no state): " + std::to_string(excluded_no_state) +
-                        ", Included: " + std::to_string(included_tracks)).c_str());
-        }
-
-        // --- Send 'TRK_PARAMS' tensor ---
-        std::vector<int64_t> trk_params_shape = {static_cast<int64_t>(included_tracks), 8};
-        responder.ProcessTensor(
-            "TRK_PARAMS", TRITONSERVER_TYPE_FP32, trk_params_shape,
-            reinterpret_cast<const char*>(trk_params_buffer.data()),
-            TRITONSERVER_MEMORY_CPU, 0);
-
-        // --- Send 'MEASUREMENTS' tensor ---
-        std::vector<int64_t> measurements_shape 
-            = {static_cast<int64_t>(measurements_buffer.size() / 6), 6};
-        responder.ProcessTensor(
-            "MEASUREMENTS", TRITONSERVER_TYPE_FP32, measurements_shape,
-            reinterpret_cast<const char*>(measurements_buffer.data()),
-            TRITONSERVER_MEMORY_CPU, 0);
-
-        // --- Send 'COVARIANCES' tensor ---
-        std::vector<int64_t> covariances_shape 
-            = {static_cast<int64_t>(covariances_buffer.size() / 25), 25};
-        responder.ProcessTensor(
-            "COVARIANCES", TRITONSERVER_TYPE_FP32, covariances_shape,
-            reinterpret_cast<const char*>(covariances_buffer.data()),
-            TRITONSERVER_MEMORY_CPU, 0);
-
-        // --- Send 'GEOMETRY_IDS' tensor ---
-        std::vector<int64_t> geometry_ids_shape = {static_cast<int64_t>(geometry_ids_buffer.size())};
-        responder.ProcessTensor(
-            "GEOMETRY_IDS", TRITONSERVER_TYPE_INT64, geometry_ids_shape,
-            reinterpret_cast<const char*>(geometry_ids_buffer.data()),
-            TRITONSERVER_MEMORY_CPU, 0);
-    }
+    std::vector<int64_t> tracks_shape =
+        {static_cast<int64_t>(tracks_buffer.size())};
+    responder.ProcessTensor(
+        model_state->OutputTensorName().c_str(), TRITONSERVER_TYPE_UINT8,
+        tracks_shape, reinterpret_cast<const char*>(tracks_buffer.data()),
+        TRITONSERVER_MEMORY_CPU, 0);
 
     if (print_stats)
     {

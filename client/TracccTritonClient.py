@@ -85,6 +85,124 @@ def build_cell_buffer(input_data, athena_to_detray, geom_id_map):
     )
     return np.frombuffer(buffer, dtype=np.uint8)
 
+# traccc::track_fit_outcome::SUCCESS
+TRACK_FIT_OUTCOME_SUCCESS = 1
+
+# detray::bound_track_parameters as it sits in memory: the 6-element bound
+# vector (loc0, loc1, phi, theta, qop, time), the 6x6 covariance, then the
+# surface identifier. 176 bytes with a float scalar.
+BOUND_PARAMS_DTYPE = np.dtype(
+    {
+        "names": ["vector", "covariance", "surface_link"],
+        "formats": [(np.float32, 6), (np.float32, (6, 6)), np.uint64],
+        "offsets": [0, 24, 168],
+        "itemsize": 176,
+    }
+)
+
+# struct track_constituent_link { unsigned short type; unsigned int index; }
+LINK_DTYPE = np.dtype(
+    {
+        "names": ["type", "index"],
+        "formats": [np.uint16, np.uint32],
+        "offsets": [0, 4],
+        "itemsize": 8,
+    }
+)
+
+SCALAR = np.float32
+SURFACE_LINK = np.uint64
+
+# The columns of the three traccc containers, in the order
+# visit_track_columns writes them (TracccGpuStandalone.hpp). Each entry is
+# (container, name, dtype).
+TRACKS_COLUMNS = [
+    ("measurements", "local_position", (np.float32, 2)),
+    ("measurements", "local_variance", (np.float32, 2)),
+    ("measurements", "dimensions", np.uint32),
+    ("measurements", "time", np.float32),
+    ("measurements", "diameter", np.float32),
+    ("measurements", "identifier", np.uint32),
+    ("measurements", "surface_link", SURFACE_LINK),
+    ("measurements", "subspace", (np.uint8, 2)),
+    ("measurements", "cluster_index", np.uint32),
+    ("tracks", "fit_outcome", np.uint16),
+    ("tracks", "params", BOUND_PARAMS_DTYPE),
+    ("tracks", "ndf", SCALAR),
+    ("tracks", "chi2", SCALAR),
+    ("tracks", "pval", SCALAR),
+    ("tracks", "nholes", np.uint32),
+    ("states", "state", np.uint8),
+    ("states", "filtered_chi2", SCALAR),
+    ("states", "smoothed_chi2", SCALAR),
+    ("states", "backward_chi2", SCALAR),
+    ("states", "filtered_params", BOUND_PARAMS_DTYPE),
+    ("states", "smoothed_params", BOUND_PARAMS_DTYPE),
+    ("states", "measurement_index", np.uint32),
+]
+
+def parse_tracks_buffer(buf):
+    """Unpack the raw byte layout produced by
+    TracccGpuStandalone::tracks_to_buffer, which is the traccc SoA containers
+    dumped column by column: four uint64 element counts, then every column back
+    to back, then the flattened jagged constituent_links.
+
+    A client that links traccc reads this straight back into the containers (see
+    tracks_from_buffer in TracccGpuStandalone.cpp). This is the numpy
+    equivalent, so plotting works without a traccc build. Since the counts fix
+    the total length, the check at the end catches any layout drift between the
+    server's traccc build and the sizes assumed above.
+    """
+    raw = buf.tobytes()
+
+    if len(raw) < 32:
+        raise ValueError("TRACKS buffer is too small to contain the counts")
+
+    n_meas, n_tracks, n_states, n_links = (
+        int(v) for v in np.frombuffer(raw, dtype=np.uint64, count=4)
+    )
+    counts = {
+        "measurements": n_meas,
+        "tracks": n_tracks,
+        "states": n_states,
+    }
+
+    offset = 32
+
+    def take(dtype, count):
+        """Read one column."""
+        nonlocal offset
+        dtype = np.dtype(dtype)
+        nbytes = count * dtype.itemsize
+        if offset + nbytes > len(raw):
+            raise ValueError(
+                f"TRACKS buffer is truncated: needed {nbytes} more bytes at "
+                f"offset {offset} of {len(raw)}"
+            )
+        column = np.frombuffer(raw, dtype=dtype, count=count, offset=offset)
+        offset += nbytes
+        return column
+
+    out = {"measurements": {}, "tracks": {}, "states": {}}
+    for container, name, dtype in TRACKS_COLUMNS:
+        out[container][name] = take(dtype, counts[container])
+
+    # Re-inflate the jagged constituent_links column.
+    link_counts = take(np.uint32, n_tracks)
+    links = take(LINK_DTYPE, n_links)
+    out["tracks"]["constituent_links"] = np.split(
+        links, np.cumsum(link_counts)[:-1]
+    )
+
+    if offset != len(raw):
+        raise ValueError(
+            f"TRACKS buffer size mismatch: consumed {offset} of {len(raw)} "
+            f"bytes; the server's traccc build does not match the column sizes "
+            f"assumed by this parser"
+        )
+
+    return out
+
 def print_inference_statistics(triton_client, model_name):
     """Fetch and print Triton's per-model statistics (queue/compute time,
     request counts) via the gRPC client's built-in stats API."""
@@ -130,14 +248,8 @@ def main():
     ]
     inputs[0].set_data_from_numpy(cell_buffer)
 
-    # Specify outputs
-    output_names = [
-        "TRK_PARAMS",      # [n_tracks, 2] - chi2, ndf
-        "MEASUREMENTS",    # [total_meas_with_seps, 6] - localx, localy, phi, theta, qop, time
-        "COVARIANCES",     # [total_meas_with_seps, 25] - 5x5 covariance matrix flattened
-        "GEOMETRY_IDS"     # [total_meas_with_seps] - geometry IDs with 0 separators
-    ]
-    outputs = [grpcclient.InferRequestedOutput(name) for name in output_names]
+    # Single raw output buffer, unpacked by parse_tracks_buffer
+    outputs = [grpcclient.InferRequestedOutput("TRACKS")]
 
     model_name = "traccc-gpu"
 
@@ -152,22 +264,36 @@ def main():
         print_inference_statistics(triton_client, model_name)
 
     # Retrieve and process outputs
-    trk_params = result.as_numpy("TRK_PARAMS")       # [n_tracks, 8]
-    measurements = result.as_numpy("MEASUREMENTS")   # [total_meas_with_seps, 6]
-    covariances = result.as_numpy("COVARIANCES")     # [total_meas_with_seps, 25]
-    geometry_ids = result.as_numpy("GEOMETRY_IDS")   # [total_meas_with_seps]
-    
-    # Extract global track parameters
-    chi2 = trk_params[:, 0]
-    ndf = trk_params[:, 1]
-    l0 = trk_params[:, 2]
-    l1 = trk_params[:, 3]
-    phi = trk_params[:, 4]
-    theta = trk_params[:, 5]
-    qop = trk_params[:, 6]
-    
-    print(f"Recieved {len(chi2)} tracks. Plotting parameters...")
-    
+    decoded = parse_tracks_buffer(result.as_numpy("TRACKS"))
+    tracks = decoded["tracks"]
+    measurements = decoded["measurements"]
+
+    # The server ships the containers unfiltered, so the track quality cuts are
+    # the client's to make.
+    n_links = np.array([len(links) for links in tracks["constituent_links"]])
+    accepted = (
+        (tracks["fit_outcome"] == TRACK_FIT_OUTCOME_SUCCESS)
+        & (tracks["ndf"] >= 0)
+        & (n_links >= 3)
+    )
+
+    print(
+        f"Recieved {len(accepted)} tracks "
+        f"({int(accepted.sum())} passing the quality cuts), "
+        f"{len(measurements['surface_link'])} measurements. "
+        f"Plotting parameters..."
+    )
+
+    # The bound vector is (loc0, loc1, phi, theta, qop, time).
+    bound = tracks["params"]["vector"][accepted]
+    chi2 = tracks["chi2"][accepted]
+    ndf = tracks["ndf"][accepted]
+    l0, l1, phi, theta, qop = (bound[:, i] for i in range(5))
+
+    # Measurement surface links are raw detray IDs. A consumer wanting Athena
+    # identifiers inverts the map it already loaded:
+    #   {v: k for k, v in athena_to_detray.items()}
+
     plot_histogram(chi2, "Chi2", "Chi2", logy=True)
     plot_histogram(ndf, "NDF", "NDF")
     plot_histogram(l0, "L0", "L0")

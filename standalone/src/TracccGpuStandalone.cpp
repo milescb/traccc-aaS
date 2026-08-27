@@ -1,4 +1,5 @@
 #include "TracccGpuStandalone.hpp"
+#include "TracccEdmConversion.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -102,6 +103,85 @@ std::vector<uint8_t> build_cell_buffer(
     return buffer;
 }
 
+// Rebuild the traccc containers from the buffer the server sends: size the
+// containers from the counts, then read each column back in the same order.
+// The exact inverse of TracccGpuStandalone::tracks_to_buffer (see that function
+// for the byte layout). This lives on the client side of the wire, so the
+// backend never compiles it.
+TracccResults tracks_from_buffer(const uint8_t *buffer, std::size_t byte_size,
+                                 vecmem::memory_resource &mr)
+{
+    std::uint64_t counts[4] = {0, 0, 0, 0};
+    if (buffer == nullptr || byte_size < sizeof(counts)) {
+        throw std::runtime_error(
+            "TRACKS buffer is too small to contain the element counts");
+    }
+    std::memcpy(counts, buffer, sizeof(counts));
+
+    TracccResults results{
+        traccc::edm::track_container<traccc::default_algebra>::host{mr},
+        traccc::edm::measurement_collection::host{mr}};
+    auto &measurements = results.measurements;
+    auto &tracks = results.tracks_and_states.tracks;
+    auto &states = results.tracks_and_states.states;
+
+    // Sizing the containers also sizes every column, which is what tells the
+    // reader below how many bytes each one occupies.
+    measurements.resize(static_cast<std::size_t>(counts[0]));
+    tracks.resize(static_cast<std::size_t>(counts[1]));
+    states.resize(static_cast<std::size_t>(counts[2]));
+
+    std::vector<std::uint32_t> link_counts(static_cast<std::size_t>(counts[1]));
+    std::vector<traccc::edm::track_constituent_link> links(
+        static_cast<std::size_t>(counts[3]));
+
+    std::size_t offset = sizeof(counts);
+    auto read = [&](auto &column) {
+        using value_type =
+            typename std::remove_cvref_t<decltype(column)>::value_type;
+        const std::size_t bytes = column.size() * sizeof(value_type);
+        if (offset + bytes > byte_size) {
+            throw std::runtime_error(
+                "TRACKS buffer is truncated: needed " + std::to_string(bytes) +
+                " more bytes at offset " + std::to_string(offset) + " of " +
+                std::to_string(byte_size));
+        }
+        if (bytes > 0u) {
+            std::memcpy(column.data(), buffer + offset, bytes);
+        }
+        offset += bytes;
+    };
+
+    visit_track_columns(measurements, tracks, states, read);
+    read(link_counts);
+    read(links);
+
+    // The counts determine the length exactly, so a leftover tail means the
+    // sender's columns are not the size this build expects.
+    if (offset != byte_size) {
+        throw std::runtime_error(
+            "TRACKS buffer size mismatch: consumed " + std::to_string(offset) +
+            " of " + std::to_string(byte_size) +
+            " bytes; the sender's traccc build does not match this one");
+    }
+
+    // Re-inflate the jagged constituent_links column.
+    auto &constituent_links = tracks.constituent_links();
+    std::size_t link_offset = 0;
+    for (std::size_t i = 0; i < link_counts.size(); ++i) {
+        const std::size_t count = link_counts[i];
+        if (link_offset + count > links.size()) {
+            throw std::runtime_error(
+                "TRACKS buffer has inconsistent constituent link counts");
+        }
+        constituent_links[i].assign(links.begin() + link_offset,
+                                    links.begin() + link_offset + count);
+        link_offset += count;
+    }
+
+    return results;
+}
+
 // One-time dump of the server's geometry_id -> module_index mapping for the client
 void dump_geom_id_map(
     const std::unordered_map<traccc::geometry_id, unsigned int> &geomIdMap,
@@ -125,6 +205,89 @@ void dump_geom_id_map(
                << " entries) to " << outPath << std::endl;
 }
 
+// Print the first few tracks of a TracccResults, the way a client would once it
+// has decoded the TRACKS buffer back into traccc containers.
+void print_tracks(const TracccResults &results, std::size_t max_tracks)
+{
+    const auto &tracks = results.tracks_and_states.tracks;
+
+    std::cout << "\nTracks: " << tracks.size()
+              << ", states: " << results.tracks_and_states.states.size()
+              << ", measurements: " << results.measurements.size() << std::endl;
+
+    std::size_t printed_tracks = 0;
+    for (std::size_t i = 0; i < tracks.size() && printed_tracks < max_tracks; ++i)
+    {
+        const auto &track = tracks.at(i);
+
+        if (track.constituent_links().size() < 1) {
+            continue;
+        }
+
+        const auto &fitted_params = track.params();
+
+        std::cout << "Track " << i << ": chi2 = " << track.chi2()
+                  << ", ndf = " << track.ndf()
+                  << ", pval = " << track.pval()
+                  << ", nholes = " << track.nholes()
+                  << ", l0 = " << fitted_params.bound_local()[0]
+                  << ", l1 = " << fitted_params.bound_local()[1]
+                  << ", phi = " << fitted_params.phi()
+                  << ", theta = " << fitted_params.theta()
+                  << ", q/p = " << fitted_params.qop()
+                  << ", time = " << fitted_params.time()
+                  << ", fit outcome = "
+                  << static_cast<std::underlying_type<traccc::track_fit_outcome>::type>(
+                         track.fit_outcome())
+                  << ", links = " << track.constituent_links().size()
+                  << std::endl;
+
+        ++printed_tracks;
+    }
+}
+
+// Confirm that decoding the buffer reproduces the containers it was built from,
+// so the driver actually exercises the wire format the server ships.
+void check_round_trip(const TracccResults &original,
+                      const TracccResults &decoded)
+{
+    const auto &a = original.tracks_and_states;
+    const auto &b = decoded.tracks_and_states;
+
+    if (a.tracks.size() != b.tracks.size() ||
+        a.states.size() != b.states.size() ||
+        original.measurements.size() != decoded.measurements.size()) {
+        throw std::runtime_error("TRACKS round trip changed the element counts");
+    }
+
+    for (std::size_t i = 0; i < a.tracks.size(); ++i) {
+        const auto track_a = a.tracks.at(i);
+        const auto track_b = b.tracks.at(i);
+        if (track_a.chi2() != track_b.chi2() || track_a.ndf() != track_b.ndf() ||
+            track_a.pval() != track_b.pval() ||
+            track_a.nholes() != track_b.nholes() ||
+            track_a.fit_outcome() != track_b.fit_outcome() ||
+            track_a.constituent_links().size() !=
+                track_b.constituent_links().size()) {
+            throw std::runtime_error("TRACKS round trip altered track " +
+                                     std::to_string(i));
+        }
+    }
+
+    for (std::size_t i = 0; i < original.measurements.size(); ++i) {
+        const auto meas_a = original.measurements.at(i);
+        const auto meas_b = decoded.measurements.at(i);
+        if (meas_a.surface_link() != meas_b.surface_link() ||
+            meas_a.local_position() != meas_b.local_position() ||
+            meas_a.identifier() != meas_b.identifier()) {
+            throw std::runtime_error("TRACKS round trip altered measurement " +
+                                     std::to_string(i));
+        }
+    }
+
+    std::cout << "TRACKS buffer round trip verified" << std::endl;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 3)
@@ -140,18 +303,25 @@ int main(int argc, char *argv[])
     std::cout << "Using device ID: " << deviceID << std::endl;
     std::cout << "Running " << argv[0] << " on " << event_file << std::endl;
 
+    const std::string geoDir = "/traccc/itk-geometry/";
+
     vecmem::host_memory_resource host_mr;
     vecmem::cuda::device_memory_resource device_mr(deviceID);
-    
-    TracccGpuStandalone traccc_gpu(&host_mr, &device_mr, deviceID);
+
+    TracccGpuStandalone traccc_gpu(&host_mr, &device_mr, deviceID, geoDir);
 
     dump_geom_id_map(
         traccc_gpu.getGeomIdMap(),
         (std::filesystem::path(event_file).parent_path() /
          "geom_id_to_module_index.json").string());
 
+    // The client owns the athena -> detray mapping, so load it here rather than
+    // in the wrapper: the server never needs it.
+    const std::map<int64_t, uint64_t> athena_to_detray =
+        read_athena_to_detray_mapping(geoDir + "/athenaIdentifierToDetrayMap.txt");
+
     std::vector<traccc::io::csv::cell> cells = read_csv(
-        event_file, traccc_gpu.getAthenaToDetrayMap(), true);
+        event_file, athena_to_detray, true);
 
     std::vector<uint8_t> cell_buffer = build_cell_buffer(
         cells, traccc_gpu.getGeomIdMap());
@@ -161,88 +331,18 @@ int main(int argc, char *argv[])
 
     auto traccc_result = traccc_gpu.run(std::move(cell_collection), true);
 
-    int total_tracks = traccc_result.tracks_and_states.tracks.size();
-    int excluded_non_positive_ndf = 0;
-    int excluded_not_all_smoothed = 0;
-    int excluded_unknown = 0;
-    int excluded_no_state = 0;
-    int printed_tracks = 0;
+    // Serialize exactly as the server does, then decode the buffer back into
+    // traccc containers the way a client would, so this driver exercises the
+    // full round trip of the TRACKS wire format.
+    std::vector<uint8_t> tracks_buffer = traccc_gpu.tracks_to_buffer(traccc_result);
+    std::cout << "\nSerialized tracks into " << tracks_buffer.size()
+              << " bytes" << std::endl;
 
-    for (size_t i = 0; i < traccc_result.tracks_and_states.tracks.size() && printed_tracks < 5; ++i)
-    {
-        const auto& track = traccc_result.tracks_and_states.tracks.at(i);
+    TracccResults decoded = tracks_from_buffer(
+        tracks_buffer.data(), tracks_buffer.size(), host_mr);
 
-        auto track_fit_outcome = track.fit_outcome();
-
-        std::cout << "Fit outcome: " << static_cast<std::underlying_type<traccc::track_fit_outcome>::type>(track_fit_outcome) << std::endl;
-
-        if (track.constituent_links().size() < 1) {
-            excluded_no_state += 1;
-            continue;
-        }
-
-        const auto& fitted_params = track.params();
-        traccc::scalar l0 = fitted_params.bound_local()[0];
-        traccc::scalar l1 = fitted_params.bound_local()[1];
-        traccc::scalar phi = fitted_params.phi();
-        traccc::scalar theta = fitted_params.theta();
-        traccc::scalar qop = fitted_params.qop();
-        
-        std::cout << "Track " << i << ": chi2 = " << track.chi2()
-                  << ", ndf = " << track.ndf()
-                  << ", l0 = " << l0
-                  << ", l1 = " << l1
-                  << ", phi = " << phi
-                  << ", theta = " << theta  
-                  << ", q/p = " << qop 
-                  << ", time = " << fitted_params.time()
-                  << std::endl;
-
-        const auto& constituent_links = track.constituent_links();
-        // for (size_t j = 0; j < constituent_links.size(); ++j)
-        // {
-        //     const auto& link = constituent_links[j];
-            
-        //     if (link.type != traccc::edm::track_constituent_link::track_state) {
-        //         continue;
-        //     }
-
-        //     const auto& state = traccc_result.tracks_and_states.states.at(link.index);
-        //     size_t meas_idx = state.measurement_index();
-
-        //     std::cout << "Track is smoothed: " << state.is_smoothed() << std::endl;
-        //     if (state.is_smoothed()) {
-        //         std::cout << "  Filtered parameters: " << state.smoothed_params() << std::endl;
-        //         std::cout << "  Smoothed covariance: " << state.smoothed_params().covariance()[0][1] << std::endl;
-        //         std::cout << "  Time: " << state.smoothed_params().time() << std::endl;
-        //     }
-        //     // std::cout << "  Smoothed parameters: " << state.smoothed_params() << std::endl;
-
-        //     const auto& measurement = traccc_result.measurements.at(meas_idx);
-
-        //     std::cout << "  Measurement ID: " << measurement.identifier()
-        //               << ", Detected at detray ID: " << measurement.surface_link().value()
-        //               << ", Local Position: (" << measurement.local_position()[0] << ", " 
-        //               << measurement.local_position()[1] << ")"
-        //               << ", Local Variance: (" << measurement.local_variance()[0] << ", "
-        //               << measurement.local_variance()[1] << ")"
-        //               << ", Time: " << measurement.time()
-        //               << ", Measurement Dimension: " << measurement.dimensions()
-        //               << std::endl;
-        // }
-        ++printed_tracks;
-    }
-
-    // Print final exclusion statistics
-    std::cout << "\n=== Track Exclusion Summary ===" << std::endl;
-    std::cout << "Total tracks processed: " << total_tracks << std::endl;
-    std::cout << "Excluded (non-positive NDF): " << excluded_non_positive_ndf << std::endl;
-    std::cout << "Excluded (not all smoothed): " << excluded_not_all_smoothed << std::endl;
-    std::cout << "Excluded (unknown outcome): " << excluded_unknown << std::endl;
-    std::cout << "Excluded (no state): " << excluded_no_state << std::endl;
-    std::cout << "Total excluded: " << (excluded_non_positive_ndf + excluded_not_all_smoothed + 
-                                         excluded_unknown + excluded_no_state) << std::endl;
-    std::cout << "Tracks printed: " << printed_tracks << std::endl;
+    check_round_trip(traccc_result, decoded);
+    print_tracks(decoded, 5);
 
     return 0;
 }
