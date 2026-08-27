@@ -116,7 +116,7 @@ First, enter the docker and set environment variables as documented above. Then 
 cd backend/traccc-gpu && mkdir build install && cd build
 cmake -B . -S ../ \
     -DCMAKE_INSTALL_PREFIX=../install/ \
-    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-Wno-template-body"
 
 cmake --build . --target install -- -j20
 ```
