@@ -237,8 +237,11 @@ Once the standalone compiles and runs, you can move on to the next step!
 
 If you did not have to make any changes to `standalone/src/TracccGpuStandalone.cpp` but only to the 
 header file, then you should be able to build as before. If you did find yourself in the worst-case 
-scenario above, then you will need to make similar changes to `backend/traccc-gpu/traccc.cc:676-836` 
-as before to properly deal with output parsing. 
+scenario above, then you will need to make similar changes to 
+`TracccGpuStandalone::tracks_to_buffer` in `standalone/src/TracccGpuStandalone.hpp` to properly deal 
+with output parsing. The backend simply ships whatever that function packs as a single raw `TRACKS` 
+buffer, so the output format is defined there and mirrored by `parse_tracks_buffer` in 
+`client/TracccTritonClient.py`. 
 
 When complete, test by building and running the simple python client as detailed above. 
 

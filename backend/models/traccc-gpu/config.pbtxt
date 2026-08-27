@@ -9,24 +9,9 @@ input [
 ]
 output [
   {
-    name: "TRK_PARAMS"
-    data_type: TYPE_FP32
-    dims: [ -1, 8 ]
-  },
-  {
-    name: "MEASUREMENTS"
-    data_type: TYPE_FP32
-    dims: [ -1, 6 ]
-  },
-  {
-    name: "COVARIANCES"
-    data_type: TYPE_FP32
-    dims: [-1, 25]
-  },
-  {
-    name: "GEOMETRY_IDS"
-    data_type: TYPE_INT64
-    dims: [ -1, 1 ]
+    name: "TRACKS"
+    data_type: TYPE_UINT8
+    dims: [ -1 ]
   }
 ]
 instance_group [
