@@ -26,9 +26,16 @@
 
 #include <cuda_runtime_api.h>
 
-#include <chrono>
+#include <vecmem/memory/host_memory_resource.hpp>
 
-#include "TracccGpuStandalone.hpp"
+#include <chrono>
+#include <cstdlib>
+#include <exception>
+#include <memory>
+#include <string>
+
+#include "traccc/examples/cuda/full_chain_service.hpp"
+#include "traccc_aas/wire_format.hpp"
 #include "triton/backend/backend_common.h"
 #include "triton/backend/backend_input_collector.h"
 #include "triton/backend/backend_model.h"
@@ -364,8 +371,7 @@ private:
         TRITONBACKEND_ModelInstance* triton_model_instance)
         : BackendModelInstance(model_state, triton_model_instance),
             model_state_(model_state),
-            host_mr_(),
-            device_mr_(DeviceId())
+            host_mr_()
     {
     }
 
@@ -379,12 +385,12 @@ public:
     // Get the state of the model that corresponds to this instance.
     ModelState* StateForModel() const { return model_state_; }
 
-    // define standalone object
-    std::unique_ptr<TracccGpuStandalone> traccc_gpu_standalone_;
+    // the reconstruction chain, from traccc::examples_cuda
+    std::unique_ptr<traccc::cuda::full_chain_service> chain_;
 
-    // Memory resources
+    // Memory resource for the host side results. The chain owns its own
+    // device memory resource, on the device it was constructed for.
     vecmem::host_memory_resource host_mr_;
-    vecmem::cuda::device_memory_resource device_mr_;
 };
 
 TRITONSERVER_Error*
@@ -439,11 +445,31 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
             ("Failed to set CUDA device: " + std::string(cudaGetErrorString(err))).c_str());
     }
   
-    instance_state->traccc_gpu_standalone_ = std::make_unique<TracccGpuStandalone>(
-        &instance_state->host_mr_,
-        &instance_state->device_mr_,
-        instance_state->DeviceId()
-    );
+    // The geometry location is a deployment detail, so take it from the
+    // environment rather than baking a path into the backend.
+    const char* geo_dir_env = std::getenv("TRACCC_ITK_GEO_DIR");
+    const std::string geo_dir =
+        (geo_dir_env != nullptr) ? std::string(geo_dir_env)
+                                 : std::string("/traccc/itk-geometry/");
+
+    // initialize() reads the geometry from file, so it can fail for reasons
+    // Triton needs to hear about as an error rather than as a crash.
+    try {
+        instance_state->chain_ =
+            std::make_unique<traccc::cuda::full_chain_service>(
+                instance_state->host_mr_, traccc_aas::make_itk_config(geo_dir),
+                instance_state->DeviceId(),
+                traccc::getDefaultLogger("TracccBackend",
+                                         traccc::Logging::Level::INFO));
+        instance_state->chain_->initialize();
+    }
+    catch (const std::exception& e) {
+        return TRITONSERVER_ErrorNew(
+            TRITONSERVER_ERROR_INTERNAL,
+            (std::string("Failed to initialize the traccc chain: ") + e.what())
+                .c_str());
+    }
+
     return nullptr;  // success
 }
 
@@ -613,11 +639,12 @@ TRITONBACKEND_ModelInstanceExecute(
     // buffer (single UINT8 tensor, layout: uint64 N followed by the SoA column
     // blocks channel0/channel1/activation/time/module_index).
     traccc::edm::silicon_cell_collection::host cells =
-        instance_state->traccc_gpu_standalone_->cells_from_buffer(
+        traccc_aas::cells_from_buffer(
             reinterpret_cast<const uint8_t *>(input_cells_buffer),
-            input_cells_buffer_byte_size);
+            input_cells_buffer_byte_size,
+            instance_state->chain_->cell_memory_resource());
 
-    bool print_stats = false;
+    bool print_stats = true;
 
     auto input_proc_end = input_proc_start;
     if (print_stats)
@@ -635,7 +662,7 @@ TRITONBACKEND_ModelInstanceExecute(
     uint64_t compute_start_ns = 0;
     SET_TIMESTAMP(compute_start_ns);
 
-    auto traccc_result = instance_state->traccc_gpu_standalone_->run(std::move(cells), print_stats);
+    auto traccc_result = instance_state->chain_->run(cells);
 
     auto output_proc_start = input_proc_end;
     if (print_stats)
@@ -674,9 +701,9 @@ TRITONBACKEND_ModelInstanceExecute(
     // response for that request.
 
     // Serialize the traccc containers into the raw client buffer (single UINT8
-    // tensor, layout documented above TracccGpuStandalone::tracks_to_buffer).
+    // tensor, layout documented above traccc_aas::tracks_to_buffer).
     const std::vector<uint8_t> tracks_buffer =
-        instance_state->traccc_gpu_standalone_->tracks_to_buffer(traccc_result);
+        traccc_aas::tracks_to_buffer(traccc_result);
 
     std::vector<int64_t> tracks_shape =
         {static_cast<int64_t>(tracks_buffer.size())};

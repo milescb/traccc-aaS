@@ -341,7 +341,7 @@ if __name__ == "__main__":
         "--athena-map",
         type=str,
         required=False,
-        default="/traccc/itk-geometry/athenaIdentifierToDetrayMap.txt",
+        default="/global/cfs/projectdirs/m3443/data/traccc-aaS/data/itk-geo/athenaIdentifierToDetrayMap.txt",
         help="Path to the athena->detray geometry ID mapping file used by "
              "the server. Default is /traccc/itk-geometry/"
              "athenaIdentifierToDetrayMap.txt.",

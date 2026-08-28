@@ -1,10 +1,18 @@
-#include "TracccGpuStandalone.hpp"
+#include "traccc/examples/cuda/full_chain_service.hpp"
+#include "traccc_aas/wire_format.hpp"
+
 #include "TracccEdmConversion.hpp"
 
+#include "traccc/io/csv/make_cell_reader.hpp"
+
+#include <vecmem/memory/host_memory_resource.hpp>
+
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <map>
 
 struct cell_order {
@@ -50,7 +58,7 @@ std::vector<traccc::io::csv::cell> read_csv(
 }
 
 // Pack CSV cells into the raw byte layout expected by
-// TracccGpuStandalone::cells_from_buffer: an 8-byte cell-count header
+// traccc_aas::cells_from_buffer: an 8-byte cell-count header
 // followed by 5 SoA column blocks of length N (channel0, channel1,
 // activation, time, module_index), matching what a real client would send.
 std::vector<uint8_t> build_cell_buffer(
@@ -103,85 +111,6 @@ std::vector<uint8_t> build_cell_buffer(
     return buffer;
 }
 
-// Rebuild the traccc containers from the buffer the server sends: size the
-// containers from the counts, then read each column back in the same order.
-// The exact inverse of TracccGpuStandalone::tracks_to_buffer (see that function
-// for the byte layout). This lives on the client side of the wire, so the
-// backend never compiles it.
-TracccResults tracks_from_buffer(const uint8_t *buffer, std::size_t byte_size,
-                                 vecmem::memory_resource &mr)
-{
-    std::uint64_t counts[4] = {0, 0, 0, 0};
-    if (buffer == nullptr || byte_size < sizeof(counts)) {
-        throw std::runtime_error(
-            "TRACKS buffer is too small to contain the element counts");
-    }
-    std::memcpy(counts, buffer, sizeof(counts));
-
-    TracccResults results{
-        traccc::edm::track_container<traccc::default_algebra>::host{mr},
-        traccc::edm::measurement_collection::host{mr}};
-    auto &measurements = results.measurements;
-    auto &tracks = results.tracks_and_states.tracks;
-    auto &states = results.tracks_and_states.states;
-
-    // Sizing the containers also sizes every column, which is what tells the
-    // reader below how many bytes each one occupies.
-    measurements.resize(static_cast<std::size_t>(counts[0]));
-    tracks.resize(static_cast<std::size_t>(counts[1]));
-    states.resize(static_cast<std::size_t>(counts[2]));
-
-    std::vector<std::uint32_t> link_counts(static_cast<std::size_t>(counts[1]));
-    std::vector<traccc::edm::track_constituent_link> links(
-        static_cast<std::size_t>(counts[3]));
-
-    std::size_t offset = sizeof(counts);
-    auto read = [&](auto &column) {
-        using value_type =
-            typename std::remove_cvref_t<decltype(column)>::value_type;
-        const std::size_t bytes = column.size() * sizeof(value_type);
-        if (offset + bytes > byte_size) {
-            throw std::runtime_error(
-                "TRACKS buffer is truncated: needed " + std::to_string(bytes) +
-                " more bytes at offset " + std::to_string(offset) + " of " +
-                std::to_string(byte_size));
-        }
-        if (bytes > 0u) {
-            std::memcpy(column.data(), buffer + offset, bytes);
-        }
-        offset += bytes;
-    };
-
-    visit_track_columns(measurements, tracks, states, read);
-    read(link_counts);
-    read(links);
-
-    // The counts determine the length exactly, so a leftover tail means the
-    // sender's columns are not the size this build expects.
-    if (offset != byte_size) {
-        throw std::runtime_error(
-            "TRACKS buffer size mismatch: consumed " + std::to_string(offset) +
-            " of " + std::to_string(byte_size) +
-            " bytes; the sender's traccc build does not match this one");
-    }
-
-    // Re-inflate the jagged constituent_links column.
-    auto &constituent_links = tracks.constituent_links();
-    std::size_t link_offset = 0;
-    for (std::size_t i = 0; i < link_counts.size(); ++i) {
-        const std::size_t count = link_counts[i];
-        if (link_offset + count > links.size()) {
-            throw std::runtime_error(
-                "TRACKS buffer has inconsistent constituent link counts");
-        }
-        constituent_links[i].assign(links.begin() + link_offset,
-                                    links.begin() + link_offset + count);
-        link_offset += count;
-    }
-
-    return results;
-}
-
 // One-time dump of the server's geometry_id -> module_index mapping for the client
 void dump_geom_id_map(
     const std::unordered_map<traccc::geometry_id, unsigned int> &geomIdMap,
@@ -205,14 +134,14 @@ void dump_geom_id_map(
                << " entries) to " << outPath << std::endl;
 }
 
-// Print the first few tracks of a TracccResults, the way a client would once it
+// Print the first few tracks of a result, the way a client would once it
 // has decoded the TRACKS buffer back into traccc containers.
-void print_tracks(const TracccResults &results, std::size_t max_tracks)
+void print_tracks(const traccc_aas::results &results, std::size_t max_tracks)
 {
-    const auto &tracks = results.tracks_and_states.tracks;
+    const auto &tracks = results.tracks.tracks;
 
     std::cout << "\nTracks: " << tracks.size()
-              << ", states: " << results.tracks_and_states.states.size()
+              << ", states: " << results.tracks.states.size()
               << ", measurements: " << results.measurements.size() << std::endl;
 
     std::size_t printed_tracks = 0;
@@ -248,11 +177,11 @@ void print_tracks(const TracccResults &results, std::size_t max_tracks)
 
 // Confirm that decoding the buffer reproduces the containers it was built from,
 // so the driver actually exercises the wire format the server ships.
-void check_round_trip(const TracccResults &original,
-                      const TracccResults &decoded)
+void check_round_trip(const traccc_aas::results &original,
+                      const traccc_aas::results &decoded)
 {
-    const auto &a = original.tracks_and_states;
-    const auto &b = decoded.tracks_and_states;
+    const auto &a = original.tracks;
+    const auto &b = decoded.tracks;
 
     if (a.tracks.size() != b.tracks.size() ||
         a.states.size() != b.states.size() ||
@@ -293,25 +222,35 @@ int main(int argc, char *argv[])
     if (argc < 3)
     {
         std::cout << "Not enough arguments, minimum requirement two of the form: " << std::endl;
-        std::cout << argv[0] << " <event_file> " << "<deviceID>" << std::endl;
+        std::cout << argv[0] << " <event_file> " << "<deviceID> [geometry_dir]" << std::endl;
         return -1;
     }
 
     std::string event_file = std::string(argv[1]);
     int deviceID = std::stoi(argv[2]);
 
+    // The geometry directory is a deployment detail, so take it from the
+    // command line (or the environment) rather than baking a path in.
+    const char *geo_dir_env = std::getenv("TRACCC_ITK_GEO_DIR");
+    const std::string geoDir =
+        (argc > 3)      ? std::string(argv[3])
+        : (geo_dir_env) ? std::string(geo_dir_env)
+                        : std::string("/traccc/itk-geometry/");
+
     std::cout << "Using device ID: " << deviceID << std::endl;
     std::cout << "Running " << argv[0] << " on " << event_file << std::endl;
-
-    const std::string geoDir = "/traccc/itk-geometry/";
+    std::cout << "Using geometry from " << geoDir << std::endl;
 
     vecmem::host_memory_resource host_mr;
-    vecmem::cuda::device_memory_resource device_mr(deviceID);
 
-    TracccGpuStandalone traccc_gpu(&host_mr, &device_mr, deviceID, geoDir);
+    traccc::cuda::full_chain_service traccc_gpu(
+        host_mr, traccc_aas::make_itk_config(geoDir), deviceID,
+        traccc::getDefaultLogger("TracccGpuStandalone",
+                                 traccc::Logging::Level::INFO));
+    traccc_gpu.initialize();
 
     dump_geom_id_map(
-        traccc_gpu.getGeomIdMap(),
+        traccc_gpu.module_index_map(),
         (std::filesystem::path(event_file).parent_path() /
          "geom_id_to_module_index.json").string());
 
@@ -324,21 +263,23 @@ int main(int argc, char *argv[])
         event_file, athena_to_detray, true);
 
     std::vector<uint8_t> cell_buffer = build_cell_buffer(
-        cells, traccc_gpu.getGeomIdMap());
+        cells, traccc_gpu.module_index_map());
 
     traccc::edm::silicon_cell_collection::host cell_collection =
-        traccc_gpu.cells_from_buffer(cell_buffer.data(), cell_buffer.size());
+        traccc_aas::cells_from_buffer(cell_buffer.data(), cell_buffer.size(),
+                                      traccc_gpu.cell_memory_resource());
 
-    auto traccc_result = traccc_gpu.run(std::move(cell_collection), true);
+    auto traccc_result = traccc_gpu.run(cell_collection);
 
     // Serialize exactly as the server does, then decode the buffer back into
     // traccc containers the way a client would, so this driver exercises the
     // full round trip of the TRACKS wire format.
-    std::vector<uint8_t> tracks_buffer = traccc_gpu.tracks_to_buffer(traccc_result);
+    std::vector<uint8_t> tracks_buffer =
+        traccc_aas::tracks_to_buffer(traccc_result);
     std::cout << "\nSerialized tracks into " << tracks_buffer.size()
               << " bytes" << std::endl;
 
-    TracccResults decoded = tracks_from_buffer(
+    traccc_aas::results decoded = traccc_aas::tracks_from_buffer(
         tracks_buffer.data(), tracks_buffer.size(), host_mr);
 
     check_round_trip(traccc_result, decoded);

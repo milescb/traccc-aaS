@@ -31,7 +31,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(/usr/local/cuda/include/)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../standalone/src)
 
 #
 # Options
@@ -101,7 +100,19 @@ FetchContent_MakeAvailable(repo-common repo-core repo-backend)
 # Traccc dependencies
 #
 find_package(covfie REQUIRED)
+# traccc::examples_cuda carries CUDA::cudart in its public link interface, so
+# the CUDA imported targets have to exist here too.
+find_package(CUDAToolkit REQUIRED)
 find_package(traccc REQUIRED)
+
+# The reconstruction chain itself lives upstream, in traccc::examples_cuda. It
+# is only built when traccc was configured with examples and CUDA enabled, and
+# find_package(traccc) succeeds either way, so check for it explicitly.
+if(NOT TARGET traccc::examples_cuda)
+  message(FATAL_ERROR
+    "The traccc installation was built without TRACCC_BUILD_EXAMPLES=ON and "
+    "TRACCC_BUILD_CUDA=ON; the traccc::examples_cuda target is required.")
+endif()
 
 # Work around an upstream ACTS packaging bug. 
 if(TARGET Eigen3::Eigen)
@@ -128,6 +139,8 @@ target_include_directories(
   triton-traccc-backend
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include
+  SYSTEM PRIVATE
     ${traccc_INCLUDE_DIR}
 )
 
@@ -162,6 +175,7 @@ target_link_libraries(
     traccc::cuda
     traccc::cuda_utils
     traccc::options
+    traccc::examples_cuda
     detray::io
 )
 
